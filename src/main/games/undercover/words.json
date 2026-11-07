@@ -1,0 +1,18 @@
+[
+  { "civilian": "咖啡", "undercover": "奶茶" },
+  { "civilian": "地铁", "undercover": "公交车" },
+  { "civilian": "猫", "undercover": "狗" },
+  { "civilian": "米饭", "undercover": "面条" },
+  { "civilian": "苹果", "undercover": "梨" },
+  { "civilian": "太阳", "undercover": "月亮" },
+  { "civilian": "医生", "undercover": "护士" },
+  { "civilian": "火车", "undercover": "高铁" },
+  { "civilian": "电影", "undercover": "电视剧" },
+  { "civilian": "雨伞", "undercover": "雨衣" },
+  { "civilian": "篮球", "undercover": "足球" },
+  { "civilian": "冰箱", "undercover": "空调" },
+  { "civilian": "图书馆", "undercover": "书店" },
+  { "civilian": "蛋糕", "undercover": "面包" },
+  { "civilian": "河流", "undercover": "湖泊" },
+  { "civilian": "吉他", "undercover": "钢琴" }
+]

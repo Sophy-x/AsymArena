@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { GameEvent, GameSnapshot, HumanActionSpec, PrivateObservation, PublicSeat, SeatConfig } from '@shared/types'
-import type { GameModule, GameResult, GameTool } from './contracts'
+import type { GameModule, GameResult, GameTool } from '../contracts'
 
 interface WordPair {
   civilian: string
@@ -21,6 +21,8 @@ interface UndercoverState {
   seats: UndercoverSeat[]
   status: 'setup' | 'running' | 'finished'
   phase: 'clue' | 'vote' | 'review' | 'finished'
+  tieBreak: boolean
+  tieCandidates: string[]
   round: number
   clueIndex: number
   voteIndex: number
@@ -29,30 +31,20 @@ interface UndercoverState {
   clues: Array<{ seatId: string; round: number; text: string }>
   votes: Record<string, string>
   events: GameEvent[]
-  observations: Array<{ seatId: string; round: number; phase: string; observation: PrivateObservation }>
+  observations: Array<{
+    seatId: string
+    round: number
+    phase: string
+    observation: PrivateObservation
+  }>
   winner?: string | null
   outcome?: string
   latestVotes?: Record<string, number>
 }
 
-const wordPairs: WordPair[] = [
-  { civilian: '咖啡', undercover: '奶茶' },
-  { civilian: '地铁', undercover: '公交车' },
-  { civilian: '猫', undercover: '狗' },
-  { civilian: '米饭', undercover: '面条' },
-  { civilian: '苹果', undercover: '梨' },
-  { civilian: '太阳', undercover: '月亮' },
-  { civilian: '医生', undercover: '护士' },
-  { civilian: '火车', undercover: '高铁' },
-  { civilian: '电影', undercover: '电视剧' },
-  { civilian: '雨伞', undercover: '雨衣' },
-  { civilian: '篮球', undercover: '足球' },
-  { civilian: '冰箱', undercover: '空调' },
-  { civilian: '图书馆', undercover: '书店' },
-  { civilian: '蛋糕', undercover: '面包' },
-  { civilian: '河流', undercover: '湖泊' },
-  { civilian: '吉他', undercover: '钢琴' },
-]
+import wordPairsData from './words.json'
+
+const wordPairs = wordPairsData as WordPair[]
 
 const toolSpecs: GameTool[] = [
   {
@@ -127,18 +119,35 @@ function publicSeats(state: UndercoverState, reveal = state.status === 'finished
 }
 
 function getSnapshot(state: UndercoverState): GameSnapshot {
-  const currentSeatId = state.status === 'running'
-    ? state.phase === 'clue' ? state.clueOrder[state.clueIndex] : state.phase === 'vote' ? state.voteOrder[state.voteIndex] : undefined
-    : undefined
+  const currentSeatId =
+    state.status === 'running'
+      ? state.phase === 'clue'
+        ? state.clueOrder[state.clueIndex]
+        : state.phase === 'vote'
+          ? state.voteOrder[state.voteIndex]
+          : undefined
+      : undefined
   const currentSeat = state.seats.find((seat) => seat.id === currentSeatId)
-  const status: GameSnapshot['status'] = state.status === 'finished'
-    ? 'finished'
-    : state.status === 'setup'
-      ? 'setup'
-      : currentSeat?.kind === 'human'
-        ? 'waiting-human'
-        : 'running'
-  const phaseLabel = state.phase === 'clue' ? '线索阶段' : state.phase === 'vote' ? '秘密投票' : state.phase === 'review' ? '本轮结算' : '对局结束'
+  const status: GameSnapshot['status'] =
+    state.status === 'finished'
+      ? 'finished'
+      : state.status === 'setup'
+        ? 'setup'
+        : currentSeat?.kind === 'human'
+          ? 'waiting-human'
+          : 'running'
+  const phaseLabel =
+    state.tieBreak && state.phase === 'clue'
+      ? '平票补充发言'
+      : state.tieBreak && state.phase === 'vote'
+        ? '平票复投'
+        : state.phase === 'clue'
+          ? '线索阶段'
+          : state.phase === 'vote'
+            ? '秘密投票'
+            : state.phase === 'review'
+              ? '本轮结算'
+              : '对局结束'
   const snapshot: GameSnapshot = {
     matchId: state.matchId,
     gameId: 'undercover',
@@ -164,32 +173,54 @@ function getSnapshot(state: UndercoverState): GameSnapshot {
 function undercoverHumanActions(state: UndercoverState, seatId: string): HumanActionSpec[] {
   if (state.status !== 'running' || currentUndercoverSeat(state) !== seatId) return []
   if (state.phase === 'clue') {
-    return [{
-      tool: 'submit_clue',
-      label: '提交线索',
-      description: '给出一条不直接包含自己词语的线索。',
-      fields: [{ key: 'clue', label: '本轮线索', type: 'text', required: true, maxLength: 80, placeholder: '描述你的词语，但不要直接说出它' }],
-    }]
+    return [
+      {
+        tool: 'submit_clue',
+        label: state.tieBreak ? '提交补充发言' : '提交线索',
+        description: state.tieBreak
+          ? '你是并列最高票候选人，请补充发言；之后所有存活玩家会重新投票。'
+          : '给出一条不直接包含自己词语的线索。',
+        fields: [
+          {
+            key: 'clue',
+            label: state.tieBreak ? '补充发言' : '本轮线索',
+            type: 'text',
+            required: true,
+            maxLength: 80,
+            placeholder: state.tieBreak ? '回应质疑并继续隐藏自己的词语' : '描述你的词语，但不要直接说出它',
+          },
+        ],
+      },
+    ]
   }
   if (state.phase === 'vote') {
-    const clues = new Map([...state.clues].reverse()
-      .filter((clue) => clue.round === state.round)
-      .map((clue) => [clue.seatId, clue.text]))
-    return [{
-      tool: 'submit_vote',
-      label: '确认投票',
-      description: '秘密投给一名仍存活且不是自己的玩家。',
-      fields: [{
-        key: 'target_seat_id',
-        label: '投票目标',
-        type: 'select',
-        required: true,
-        options: state.seats.filter((seat) => seat.alive && seat.id !== seatId).map((seat) => ({
-          value: seat.id,
-          label: clues.has(seat.id) ? `${seat.name} · ${clues.get(seat.id)}` : seat.name,
-        })),
-      }],
-    }]
+    const clues = new Map(
+      [...state.clues]
+        .reverse()
+        .filter((clue) => clue.round === state.round)
+        .map((clue) => [clue.seatId, clue.text]),
+    )
+    return [
+      {
+        tool: 'submit_vote',
+        label: '确认投票',
+        description: '秘密投给一名仍存活且不是自己的玩家。',
+        fields: [
+          {
+            key: 'target_seat_id',
+            label: '投票目标',
+            type: 'select',
+            required: true,
+            options: state.seats
+              .filter((seat) => seat.alive && seat.id !== seatId)
+              .map((seat) => ({
+                value: seat.id,
+                label: clues.has(seat.id) ? `${seat.name} · ${clues.get(seat.id)}` : seat.name,
+              })),
+          },
+        ],
+      },
+    ]
   }
   return []
 }
@@ -210,8 +241,25 @@ export const undercoverGame: GameModule = {
     maxSeats: 10,
     mcpToolCount: toolSpecs.length,
     configFields: [
-      { key: 'undercoverCount', label: '卧底人数', type: 'number', defaultValue: 1, minimum: 1, maximum: 4, step: 1 },
-      { key: 'maxRounds', label: '最大轮数', type: 'select', defaultValue: 6, options: [4, 5, 6, 8, 10].map((value) => ({ label: `${value} 轮`, value })) },
+      {
+        key: 'undercoverCount',
+        label: '卧底人数',
+        type: 'number',
+        defaultValue: 1,
+        minimum: 1,
+        maximum: 4,
+        step: 1,
+      },
+      {
+        key: 'maxRounds',
+        label: '最大轮数',
+        type: 'select',
+        defaultValue: 20,
+        options: [5, 10, 20, 30, 50, 99].map((value) => ({
+          label: `${value} 轮`,
+          value,
+        })),
+      },
     ],
   },
 
@@ -222,11 +270,11 @@ export const undercoverGame: GameModule = {
   create(config, seats) {
     this.validateSeats(seats)
     const undercoverCount = Number(config.undercoverCount ?? 1)
-    const maxRounds = Number(config.maxRounds ?? 6)
+    const maxRounds = Number(config.maxRounds ?? 20)
     if (!Number.isInteger(undercoverCount) || undercoverCount < 1 || undercoverCount >= seats.length / 2) {
       throw new Error('卧底人数必须至少为 1 且少于平民人数')
     }
-    if (!Number.isInteger(maxRounds) || maxRounds < 1 || maxRounds > 20) throw new Error('最大轮数须为 1–20')
+    if (!Number.isInteger(maxRounds) || maxRounds < 1 || maxRounds > 99) throw new Error('最大轮数须为 1–99')
     const pair = wordPairs[randomIndex(wordPairs.length)]
     const shuffledSeats = [...seats]
     for (let index = shuffledSeats.length - 1; index > 0; index -= 1) {
@@ -247,6 +295,8 @@ export const undercoverGame: GameModule = {
       seats: assigned,
       status: 'setup',
       phase: 'clue',
+      tieBreak: false,
+      tieCandidates: [],
       round: 1,
       clueIndex: 0,
       voteIndex: 0,
@@ -269,10 +319,18 @@ export const undercoverGame: GameModule = {
     return state
   },
 
-  phase(raw) { return (raw as UndercoverState).phase },
-  phaseLabel(raw) { return getSnapshot(raw as UndercoverState).phaseLabel },
-  round(raw) { return (raw as UndercoverState).round },
-  maxRounds(raw) { return (raw as UndercoverState).config.maxRounds },
+  phase(raw) {
+    return (raw as UndercoverState).phase
+  },
+  phaseLabel(raw) {
+    return getSnapshot(raw as UndercoverState).phaseLabel
+  },
+  round(raw) {
+    return (raw as UndercoverState).round
+  },
+  maxRounds(raw) {
+    return (raw as UndercoverState).config.maxRounds
+  },
   currentSeatId(raw) {
     const state = raw as UndercoverState
     if (state.status !== 'running') return undefined
@@ -280,7 +338,9 @@ export const undercoverGame: GameModule = {
     if (state.phase === 'vote') return state.voteOrder[state.voteIndex]
     return undefined
   },
-  isFinished(raw) { return (raw as UndercoverState).status === 'finished' },
+  isFinished(raw) {
+    return (raw as UndercoverState).status === 'finished'
+  },
   needsAdvance(raw) {
     const state = raw as UndercoverState
     return state.status === 'running' && state.phase === 'review'
@@ -291,9 +351,13 @@ export const undercoverGame: GameModule = {
     return [
       `You are ${seat.name}, seat ${seatId}, playing Who’s Undercover.`,
       'A round has one clue from every living seat followed by one secret vote from every living seat.',
-      'A uniquely highest-voted seat is eliminated without revealing its role. A tie eliminates nobody.',
+      'If the highest vote is tied, only the tied candidates make an additional statement; then all living seats vote again. Repeat until exactly one seat has the highest vote. Tied ballots do not eliminate anyone.',
+      'After a unique highest vote, that seat is eliminated without revealing its role.',
       'Civilians win when all undercover seats are eliminated. Undercover wins when the undercover count reaches the civilian count.',
-      'You receive only your own role and word. Never claim you know another seat’s private role or word.',
+      'This is an adversarial social-deduction game, not a word-definition exercise. Your objective is to make the other players misjudge what you know while sounding natural.',
+      'Use indirect, strategically vague clues. Never state your exact word or an obvious synonym. Conceal your private information and tactical intent, and do not announce your role or faction.',
+      'Read the private observation to learn your information, adapt to public clues, and choose actions that improve your chance of winning.',
+      'Never claim you know another seat’s private role or word.',
       'Use the currently available MCP tools to inspect your information and submit one legal action.',
     ].join(' ')
   },
@@ -308,6 +372,8 @@ export const undercoverGame: GameModule = {
     if (state.status !== 'running' || state.phase !== 'review') return state
     state.round += 1
     state.phase = 'clue'
+    state.tieBreak = false
+    state.tieCandidates = []
     state.clueOrder = state.seats.filter((seat) => seat.alive).map((seat) => seat.id)
     state.clueIndex = 0
     state.voteOrder = []
@@ -320,11 +386,21 @@ export const undercoverGame: GameModule = {
 
   tools(raw) {
     const state = raw as UndercoverState
-    return toolSpecs.filter((tool) => {
-      if (tool.name === 'submit_clue') return state.phase === 'clue' && state.status === 'running'
-      if (tool.name === 'submit_vote') return state.phase === 'vote' && state.status === 'running'
-      return true
-    })
+    return toolSpecs
+      .filter((tool) => {
+        if (tool.name === 'submit_clue') return state.phase === 'clue' && state.status === 'running'
+        if (tool.name === 'submit_vote') return state.phase === 'vote' && state.status === 'running'
+        return true
+      })
+      .map((tool) =>
+        tool.name === 'submit_clue' && state.tieBreak
+          ? {
+              ...tool,
+              description:
+                'As a tied top-vote candidate, make one additional statement without revealing your exact word. All living seats will then vote again.',
+            }
+          : tool,
+      )
   },
 
   observation(raw, seatId) {
@@ -336,7 +412,12 @@ export const undercoverGame: GameModule = {
       word: seat.word,
       publicState: getSnapshot(state),
     }
-    state.observations.push({ seatId, round: state.round, phase: state.phase, observation })
+    state.observations.push({
+      seatId,
+      round: state.round,
+      phase: state.phase,
+      observation,
+    })
     return observation
   },
 
@@ -349,7 +430,9 @@ export const undercoverGame: GameModule = {
 
     if (toolName === 'submit_clue') {
       if (state.phase !== 'clue') throw new Error('当前不是线索阶段')
-      const clue = String(args.clue ?? '').trim().replace(/\s+/g, ' ')
+      const clue = String(args.clue ?? '')
+        .trim()
+        .replace(/\s+/g, ' ')
       if (!clue) throw new Error('线索不能为空')
       if (clue.length > 80) throw new Error('线索不能超过 80 个字符')
       if (clue.toLocaleLowerCase().includes(seat.word.toLocaleLowerCase())) throw new Error('线索不能直接包含自己的词语')
@@ -360,9 +443,12 @@ export const undercoverGame: GameModule = {
         state.phase = 'vote'
         state.voteOrder = state.seats.filter((candidate) => candidate.alive).map((candidate) => candidate.id)
         state.voteIndex = 0
-        addEvent(state, 'system', '线索收集完成 · 进入秘密投票')
+        addEvent(state, 'system', state.tieBreak ? '补充发言完成 · 所有存活玩家重新秘密投票' : '线索收集完成 · 进入秘密投票')
       }
-      return { state, result: { accepted: true, publicState: getSnapshot(state) } }
+      return {
+        state,
+        result: { accepted: true, publicState: getSnapshot(state) },
+      }
     }
 
     if (toolName === 'submit_vote') {
@@ -381,15 +467,38 @@ export const undercoverGame: GameModule = {
       }, {})
       const high = Math.max(...Object.values(counts))
       const leaders = Object.keys(counts).filter((id) => counts[id] === high)
-      const eliminatedId = leaders.length === 1 ? leaders[0] : undefined
-      if (eliminatedId) {
-        findSeat(state, eliminatedId).alive = false
-        addEvent(state, 'elimination', `${findSeat(state, eliminatedId).name} 被淘汰 · 身份暂不公开`, eliminatedId)
-      } else {
-        addEvent(state, 'system', '本轮投票平票 · 无人淘汰')
-      }
       state.latestVotes = counts
       state.votes = {}
+
+      if (leaders.length > 1) {
+        state.tieBreak = true
+        state.tieCandidates = leaders
+        state.phase = 'clue'
+        state.clueOrder = leaders
+        state.clueIndex = 0
+        state.voteOrder = []
+        state.voteIndex = 0
+        addEvent(
+          state,
+          'system',
+          `最高票平票 · ${leaders.map((id) => findSeat(state, id).name).join('、')} 补充发言后，全体存活玩家重新投票`,
+        )
+        return {
+          state,
+          result: {
+            accepted: true,
+            counts,
+            tiedSeatIds: leaders,
+            tieBreak: true,
+          },
+        }
+      }
+
+      const eliminatedId = leaders[0]
+      findSeat(state, eliminatedId).alive = false
+      addEvent(state, 'elimination', `${findSeat(state, eliminatedId).name} 被淘汰 · 身份暂不公开`, eliminatedId)
+      state.tieBreak = false
+      state.tieCandidates = []
 
       const spies = state.seats.filter((candidate) => candidate.alive && candidate.role === 'undercover').length
       const civilians = state.seats.filter((candidate) => candidate.alive && candidate.role === 'civilian').length
@@ -412,15 +521,29 @@ export const undercoverGame: GameModule = {
         state.phase = 'review'
       }
       if (state.status === 'finished') addEvent(state, 'result', state.outcome ?? '对局结束')
-      return { state, result: { accepted: true, counts, eliminatedSeatId: eliminatedId, outcome: state.outcome } }
+      return {
+        state,
+        result: {
+          accepted: true,
+          counts,
+          eliminatedSeatId: eliminatedId,
+          outcome: state.outcome,
+        },
+      }
     }
 
     throw new Error(`Unknown game tool: ${toolName}`)
   },
 
-  publicState(raw) { return getSnapshot(raw as UndercoverState) },
-  humanActions(raw, seatId) { return undercoverHumanActions(raw as UndercoverState, seatId) },
-  events(raw) { return [...(raw as UndercoverState).events] },
+  publicState(raw) {
+    return getSnapshot(raw as UndercoverState)
+  },
+  humanActions(raw, seatId) {
+    return undercoverHumanActions(raw as UndercoverState, seatId)
+  },
+  events(raw) {
+    return [...(raw as UndercoverState).events]
+  },
   result(raw): GameResult | undefined {
     const state = raw as UndercoverState
     if (state.status !== 'finished') return undefined
