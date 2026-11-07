@@ -33,12 +33,14 @@ import type {
   ArenaBridge,
   CreateMatchInput,
   EloChange,
+  GameEvent,
   GameDescriptor,
   GameSnapshot,
   MatchSummary,
   ModelProfile,
   ModelProfileSummary,
   PrivateObservation,
+  PublicSeat,
   RatingEntry,
   ReplayData,
   SeatConfig,
@@ -1876,6 +1878,50 @@ function SeatEditor({
   );
 }
 
+function TimelineEvent({
+  event,
+  seats,
+  replay = false,
+}: {
+  event: GameEvent;
+  seats: PublicSeat[];
+  replay?: boolean;
+}) {
+  const isPlayerAction = event.kind === "clue" || event.kind === "human";
+  const speaker = isPlayerAction
+    ? (seats.find((seat) => seat.id === event.seatId)?.name ?? "未知席位")
+    : "系统";
+  const eventType = {
+    system: "进度",
+    clue: "发言",
+    vote: "投票",
+    elimination: "淘汰",
+    error: "错误",
+    result: "赛果",
+    human: "行动",
+  }[event.kind];
+
+  return (
+    <div className={`timeline-item ${event.kind}`}>
+      <div className="timeline-node" />
+      <div className="timeline-copy">
+        <span>
+          {replay
+            ? `ROUND ${String(event.round).padStart(2, "0")} · ${new Date(event.time).toLocaleString("zh-CN")}`
+            : `R${String(event.round).padStart(2, "0")} · ${new Date(event.time).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`}
+        </span>
+        <div className="timeline-attribution">
+          <span className={`timeline-speaker ${isPlayerAction ? "player" : "system"}`}>
+            {speaker}
+          </span>
+          <span className="timeline-event-type">{eventType}</span>
+        </div>
+        <p>{event.text}</p>
+      </div>
+    </div>
+  );
+}
+
 function MatchPage({
   snapshot,
   onBack,
@@ -2100,19 +2146,11 @@ function MatchPage({
             {tab === "events" ? (
               <div className="timeline">
                 {sortedEvents.slice(0, 18).map((event) => (
-                  <div className={`timeline-item ${event.kind}`} key={event.id}>
-                    <div className="timeline-node" />
-                    <div className="timeline-copy">
-                      <span>
-                        R{String(event.round).padStart(2, "0")} ·{" "}
-                        {new Date(event.time).toLocaleTimeString("zh-CN", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                      <p>{event.text}</p>
-                    </div>
-                  </div>
+                  <TimelineEvent
+                    key={event.id}
+                    event={event}
+                    seats={snapshot.seats}
+                  />
                 ))}
               </div>
             ) : (
@@ -2408,16 +2446,12 @@ function ReplayPage({
           </div>
           <div className="timeline replay-timeline">
             {replay.snapshot.events.map((event) => (
-              <div className={`timeline-item ${event.kind}`} key={event.id}>
-                <div className="timeline-node" />
-                <div className="timeline-copy">
-                  <span>
-                    ROUND {String(event.round).padStart(2, "0")} ·{" "}
-                    {new Date(event.time).toLocaleString("zh-CN")}
-                  </span>
-                  <p>{event.text}</p>
-                </div>
-              </div>
+              <TimelineEvent
+                key={event.id}
+                event={event}
+                seats={replay.snapshot.seats}
+                replay
+              />
             ))}
           </div>
         </section>
