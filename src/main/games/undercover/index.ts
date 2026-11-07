@@ -377,6 +377,7 @@ export const undercoverGame: GameModule = {
       'After a unique highest vote, that seat is eliminated without revealing its role.',
       'Civilians win when all undercover seats are eliminated. Undercover wins when the undercover count reaches the civilian count.',
       'Before every action, call get_my_observation to read your role and word plus the complete public event history, including your own and every other seat’s previous statements. Use these clues and events to infer each seat’s likely faction and word; treat guesses as uncertain.',
+      'Hide your own faction: every clue is visible to all seats, so avoid wording that reveals your role or makes your word easy for opponents to identify.',
       'Your goal is to make your faction win. Keep clues indirect: do not state your word, an obvious synonym, or a description that uniquely identifies it. Give only enough detail to support your faction without making your word easy for opponents to identify.',
       'Choose what to say and do to help your faction; bluff or give plausible false clues when useful.',
       'Use the available MCP tools to submit one legal action.',

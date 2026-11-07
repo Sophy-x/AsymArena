@@ -1,5 +1,13 @@
 import type { ChatMessage } from './store'
 
+export function refreshSystemPrompt(messages: ChatMessage[], content: string): void {
+  if (messages[0]?.role === 'system') {
+    messages[0].content = content
+  } else {
+    messages.unshift({ role: 'system', content })
+  }
+}
+
 export function anonymizeModelNames(messages: ChatMessage[], aliases: Array<{ name: string; alias: string }>): void {
   const replacements = aliases.filter(({ name }) => name.length > 0).sort((left, right) => right.name.length - left.name.length)
 

@@ -18,7 +18,7 @@ import type { ChatMessage, MatchDocument } from './store'
 import { ArenaStore } from './store'
 import { OpenAICompatibleProvider } from './providers/openai-compatible'
 import { getRatingExclusionReason } from './ratings/eligibility'
-import { anonymizeModelNames, trimConversationHistory } from './conversation'
+import { anonymizeModelNames, refreshSystemPrompt, trimConversationHistory } from './conversation'
 import { buildBalancedProfileAssignments } from './random-lineup'
 
 type UpdateListener = (snapshot: GameSnapshot) => void
@@ -281,12 +281,11 @@ export class MatchOrchestrator {
   private async runModelTurn(document: MatchDocument, game: GameModule, seatId: string, profileId: string): Promise<void> {
     const profile = (await this.store.profiles()).find((entry) => entry.id === profileId)
     if (!profile) throw new Error(`Model profile not found: ${profileId}`)
-    const messages = document.contextBySeat[seatId] ?? [
-      {
-        role: 'system' as const,
-        content: `${game.agentInstructions(document.gameState, seatId)} Use the provided MCP tools to observe and act. Your context is private to this seat. Do not claim an action succeeded until a tool confirms it.`,
-      },
-    ]
+    const messages = document.contextBySeat[seatId] ?? []
+    refreshSystemPrompt(
+      messages,
+      `${game.agentInstructions(document.gameState, seatId)} Use the provided MCP tools to observe and act. Your context is private to this seat. Do not claim an action succeeded until a tool confirms it.`,
+    )
     anonymizeModelNames(
       messages,
       document.seats

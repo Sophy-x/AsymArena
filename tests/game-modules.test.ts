@@ -133,6 +133,8 @@ describe('game module contract', () => {
     expect(instructions).toContain('call get_my_observation')
     expect(instructions).toContain('every other seat’s previous statements')
     expect(instructions).toContain('infer each seat’s likely faction and word')
+    expect(instructions).toContain('Hide your own faction')
+    expect(instructions).toContain('every clue is visible to all seats')
     expect(instructions).toContain('make your faction win')
     expect(instructions).toContain('a description that uniquely identifies it')
     expect(instructions).toContain('bluff or give plausible false clues')

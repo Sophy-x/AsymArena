@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { anonymizeModelNames, trimConversationHistory } from '../src/main/conversation'
+import { anonymizeModelNames, refreshSystemPrompt, trimConversationHistory } from '../src/main/conversation'
 import type { ChatMessage } from '../src/main/store'
 
 function toolCall(id: string): ChatMessage {
@@ -14,6 +14,20 @@ function toolReply(id: string): ChatMessage {
 }
 
 describe('model conversation history', () => {
+  it('refreshes old matches with the current system prompt without dropping their history', () => {
+    const messages: ChatMessage[] = [
+      { role: 'system', content: 'old instructions' },
+      { role: 'user', content: 'prior turn' },
+    ]
+
+    refreshSystemPrompt(messages, 'new instructions')
+
+    expect(messages).toEqual([
+      { role: 'system', content: 'new instructions' },
+      { role: 'user', content: 'prior turn' },
+    ])
+  })
+
   it('anonymizes model identities already present in stored context', () => {
     const messages: ChatMessage[] = [
       { role: 'system', content: 'Playing as GPT-6.1 against DeepSeek V3.' },
