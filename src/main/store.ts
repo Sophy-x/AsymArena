@@ -38,6 +38,7 @@ export interface ChatMessage {
 
 interface StoreFile {
   ratingSchemeVersion: number
+  participationSchemeVersion: number
   profiles: Array<Omit<ModelProfile, 'apiKey'> & { encryptedApiKey: string }>
   matches: MatchDocument[]
   ratings: RatingEntry[]
@@ -48,6 +49,7 @@ export class ArenaStore {
   private readonly filePath: string
   private data: StoreFile = {
     ratingSchemeVersion: 2,
+    participationSchemeVersion: 2,
     profiles: [],
     matches: [],
     ratings: [],
@@ -66,18 +68,29 @@ export class ArenaStore {
     try {
       const raw = await readFile(this.filePath, 'utf8')
       const parsed = JSON.parse(raw) as Partial<StoreFile>
+      const canReuseParticipationCounts =
+        parsed.participationSchemeVersion === 2 && parsed.modelParticipationCounts !== undefined
       const matches = (parsed.matches ?? []).map((match) => ({
         ...match,
-        participationCounted: match.participationCounted ?? match.runStatus !== 'setup',
+        participationCounted:
+          match.ratingMode === 'random-models' && match.runStatus !== 'setup'
+            ? canReuseParticipationCounts
+              ? (match.participationCounted ?? true)
+              : true
+            : false,
       }))
       this.data = {
         ratingSchemeVersion: parsed.ratingSchemeVersion ?? 0,
+        participationSchemeVersion: parsed.participationSchemeVersion ?? 0,
         profiles: parsed.profiles ?? [],
         matches,
         ratings: parsed.ratings ?? [],
-        modelParticipationCounts: parsed.modelParticipationCounts ?? countStartedModelSeatParticipations(matches),
+        modelParticipationCounts: canReuseParticipationCounts
+          ? parsed.modelParticipationCounts!
+          : countStartedModelSeatParticipations(matches),
       }
-      let needsFlush = parsed.modelParticipationCounts === undefined
+      let needsFlush = parsed.participationSchemeVersion !== 2 || parsed.modelParticipationCounts === undefined
+      this.data.participationSchemeVersion = 2
       if (this.data.ratingSchemeVersion < 2) {
         this.data.ratings = []
         this.data.matches = this.data.matches.map((match) => {

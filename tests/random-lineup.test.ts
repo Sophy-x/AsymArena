@@ -65,9 +65,10 @@ describe('balanced random lineups', () => {
 
     expect(
       countStartedModelSeatParticipations([
-        { runStatus: 'finished', seats },
-        { runStatus: 'setup', seats: [modelSeat('b2', 'b')] },
-        { runStatus: 'paused', seats: [modelSeat('b3', 'b')] },
+        { runStatus: 'finished', ratingMode: 'random-models', seats },
+        { runStatus: 'setup', ratingMode: 'random-models', seats: [modelSeat('b2', 'b')] },
+        { runStatus: 'paused', ratingMode: 'random-models', seats: [modelSeat('b3', 'b')] },
+        { runStatus: 'finished', ratingMode: 'manual', seats: [modelSeat('b4', 'b')] },
       ]),
     ).toEqual({ a: 2, b: 2 })
   })
@@ -75,6 +76,7 @@ describe('balanced random lineups', () => {
   it('records a match only once after it starts', () => {
     const match: TrackedParticipationMatch = {
       runStatus: 'setup',
+      ratingMode: 'random-models',
       participationCounted: false,
       seats: [{ id: 'a1', profileId: 'a', kind: 'model' as const, name: 'A' }],
     }
@@ -88,5 +90,19 @@ describe('balanced random lineups', () => {
     recordStartedMatchParticipation(match, counts)
     expect(counts).toEqual({ a: 1 })
     expect(match.participationCounted).toBe(true)
+  })
+
+  it('does not count started manual matches', () => {
+    const match: TrackedParticipationMatch = {
+      runStatus: 'running',
+      ratingMode: 'manual',
+      participationCounted: false,
+      seats: [{ id: 'a1', profileId: 'a', kind: 'model', name: 'A' }],
+    }
+    const counts: Record<string, number> = {}
+
+    recordStartedMatchParticipation(match, counts)
+    expect(counts).toEqual({})
+    expect(match.participationCounted).toBe(false)
   })
 })
