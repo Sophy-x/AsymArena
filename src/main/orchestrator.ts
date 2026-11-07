@@ -1,4 +1,4 @@
-import { randomInt, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import type { BrowserWindow } from 'electron'
 import type {
   CreateMatchInput,
@@ -19,6 +19,7 @@ import { ArenaStore } from './store'
 import { OpenAICompatibleProvider } from './providers/openai-compatible'
 import { getRatingExclusionReason } from './ratings/eligibility'
 import { trimConversationHistory } from './conversation'
+import { buildBalancedProfileAssignments } from './random-lineup'
 
 type UpdateListener = (snapshot: GameSnapshot) => void
 
@@ -94,10 +95,11 @@ export class MatchOrchestrator {
         if (!profileIds.has(profileId)) throw new Error('随机模型池包含不存在的模型档案')
       }
       const profileById = new Map(profiles.map((profile) => [profile.id, profile]))
+      const participationCounts = await this.store.modelParticipationCounts()
       randomProfileIds = selectedProfiles
       ratingMode = 'random-models'
-      seats = Array.from({ length: input.lineup.seatCount }, (_, index) => {
-        const profile = profileById.get(selectedProfiles[randomInt(selectedProfiles.length)])!
+      seats = buildBalancedProfileAssignments(selectedProfiles, input.lineup.seatCount, participationCounts).map((profileId, index) => {
+        const profile = profileById.get(profileId)!
         return {
           id: randomUUID(),
           kind: 'model' as const,
@@ -127,6 +129,7 @@ export class MatchOrchestrator {
       gameId: input.gameId,
       gameState,
       seats,
+      participationCounted: false,
       ratingEligible: !ratingReason,
       ratingReason,
       ratingMode,

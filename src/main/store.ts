@@ -4,12 +4,14 @@ import { join } from 'node:path'
 import type { EloChange, GameSnapshot, MatchSummary, ModelProfile, RatingEntry, ReplayData, SeatConfig } from '@shared/types'
 import type { GameResult } from './games/contracts'
 import { calculateTeamElo, modelSeatsForResult } from './ratings/team-elo'
+import { countStartedModelSeatParticipations, recordStartedMatchParticipation } from './participation'
 
 export interface MatchDocument {
   id: string
   gameId: string
   gameState: unknown
   seats: SeatConfig[]
+  participationCounted: boolean
   ratingEligible: boolean
   ratingReason?: string
   ratingMode: 'manual' | 'random-models'
@@ -39,6 +41,7 @@ interface StoreFile {
   profiles: Array<Omit<ModelProfile, 'apiKey'> & { encryptedApiKey: string }>
   matches: MatchDocument[]
   ratings: RatingEntry[]
+  modelParticipationCounts: Record<string, number>
 }
 
 export class ArenaStore {
@@ -48,6 +51,7 @@ export class ArenaStore {
     profiles: [],
     matches: [],
     ratings: [],
+    modelParticipationCounts: {},
   }
   private ready: Promise<void>
   private writeQueue: Promise<void> = Promise.resolve()
@@ -62,12 +66,18 @@ export class ArenaStore {
     try {
       const raw = await readFile(this.filePath, 'utf8')
       const parsed = JSON.parse(raw) as Partial<StoreFile>
+      const matches = (parsed.matches ?? []).map((match) => ({
+        ...match,
+        participationCounted: match.participationCounted ?? match.runStatus !== 'setup',
+      }))
       this.data = {
         ratingSchemeVersion: parsed.ratingSchemeVersion ?? 0,
         profiles: parsed.profiles ?? [],
-        matches: parsed.matches ?? [],
+        matches,
         ratings: parsed.ratings ?? [],
+        modelParticipationCounts: parsed.modelParticipationCounts ?? countStartedModelSeatParticipations(matches),
       }
+      let needsFlush = parsed.modelParticipationCounts === undefined
       if (this.data.ratingSchemeVersion < 2) {
         this.data.ratings = []
         this.data.matches = this.data.matches.map((match) => {
@@ -82,6 +92,9 @@ export class ArenaStore {
           }
         })
         this.data.ratingSchemeVersion = 2
+        needsFlush = true
+      }
+      if (needsFlush) {
         await this.flush()
       }
     } catch (error) {
@@ -172,6 +185,11 @@ export class ArenaStore {
     return [...this.data.matches]
   }
 
+  async modelParticipationCounts(): Promise<Record<string, number>> {
+    await this.ensureReady()
+    return { ...this.data.modelParticipationCounts }
+  }
+
   async deleteMatch(matchId: string, results: Map<string, GameResult>): Promise<void> {
     await this.ensureReady()
     const match = this.data.matches.find((entry) => entry.id === matchId)
@@ -186,6 +204,7 @@ export class ArenaStore {
 
   async saveMatch(document: MatchDocument): Promise<void> {
     await this.ensureReady()
+    recordStartedMatchParticipation(document, this.data.modelParticipationCounts)
     this.data.matches = this.data.matches.map((entry) => (entry.id === document.id ? document : entry))
     await this.flush()
   }

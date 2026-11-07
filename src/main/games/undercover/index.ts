@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomInt, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import type { GameEvent, GameSnapshot, HumanActionSpec, PrivateObservation, PublicSeat, SeatConfig } from '@shared/types'
 import type { GameModule, GameResult, GameTool } from '../contracts'
@@ -95,7 +95,7 @@ function addEvent(state: UndercoverState, kind: GameEvent['kind'], text: string,
 }
 
 function randomIndex(length: number): number {
-  return Math.floor(Math.random() * length)
+  return randomInt(length)
 }
 
 function findSeat(state: UndercoverState, seatId: string): UndercoverSeat {
