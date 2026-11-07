@@ -18,7 +18,7 @@ import type { ChatMessage, MatchDocument } from './store'
 import { ArenaStore } from './store'
 import { OpenAICompatibleProvider } from './providers/openai-compatible'
 import { getRatingExclusionReason } from './ratings/eligibility'
-import { trimConversationHistory } from './conversation'
+import { anonymizeModelNames, trimConversationHistory } from './conversation'
 import { buildBalancedProfileAssignments } from './random-lineup'
 
 type UpdateListener = (snapshot: GameSnapshot) => void
@@ -287,6 +287,12 @@ export class MatchOrchestrator {
         content: `${game.agentInstructions(document.gameState, seatId)} Use the provided MCP tools to observe and act. Your context is private to this seat. Do not claim an action succeeded until a tool confirms it.`,
       },
     ]
+    anonymizeModelNames(
+      messages,
+      document.seats
+        .filter((seat): seat is Extract<SeatConfig, { kind: 'model' }> => seat.kind === 'model')
+        .map((seat, index) => ({ name: seat.name, alias: `AI Seat ${String(index + 1).padStart(2, '0')}` })),
+    )
     trimConversationHistory(messages)
     messages.push({
       role: 'user',

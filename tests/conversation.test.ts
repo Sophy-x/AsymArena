@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { trimConversationHistory } from '../src/main/conversation'
+import { anonymizeModelNames, trimConversationHistory } from '../src/main/conversation'
 import type { ChatMessage } from '../src/main/store'
 
 function toolCall(id: string): ChatMessage {
@@ -14,6 +14,30 @@ function toolReply(id: string): ChatMessage {
 }
 
 describe('model conversation history', () => {
+  it('anonymizes model identities already present in stored context', () => {
+    const messages: ChatMessage[] = [
+      { role: 'system', content: 'Playing as GPT-6.1 against DeepSeek V3.' },
+      {
+        role: 'assistant',
+        tool_calls: [
+          {
+            id: 'inspect',
+            type: 'function',
+            function: { name: 'inspect', arguments: '{"seat":"DeepSeek V3"}' },
+          },
+        ],
+      },
+    ]
+
+    anonymizeModelNames(messages, [
+      { name: 'GPT-6.1', alias: 'AI Seat 01' },
+      { name: 'DeepSeek V3', alias: 'AI Seat 02' },
+    ])
+
+    expect(messages[0].content).toBe('Playing as AI Seat 01 against AI Seat 02.')
+    expect(messages[1].tool_calls?.[0].function.arguments).toBe('{"seat":"AI Seat 02"}')
+  })
+
   it('trims whole turns and keeps assistant tool calls paired with every reply', () => {
     const messages: ChatMessage[] = [
       { role: 'system', content: 'system' },

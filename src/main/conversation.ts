@@ -1,5 +1,18 @@
 import type { ChatMessage } from './store'
 
+export function anonymizeModelNames(messages: ChatMessage[], aliases: Array<{ name: string; alias: string }>): void {
+  const replacements = aliases.filter(({ name }) => name.length > 0).sort((left, right) => right.name.length - left.name.length)
+
+  const anonymize = (value: string): string => replacements.reduce((result, { name, alias }) => result.split(name).join(alias), value)
+
+  for (const message of messages) {
+    if (typeof message.content === 'string') message.content = anonymize(message.content)
+    for (const toolCall of message.tool_calls ?? []) {
+      toolCall.function.arguments = anonymize(toolCall.function.arguments)
+    }
+  }
+}
+
 export function trimConversationHistory(messages: ChatMessage[], maxMessages = 25): void {
   const validMessages: ChatMessage[] = []
   for (let index = 0; index < messages.length; index += 1) {

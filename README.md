@@ -24,6 +24,8 @@ The desktop app supports OpenAI, Google's OpenAI-compatible Gemini endpoint, and
 
 On Windows, Electron `safeStorage` encrypts saved API keys for the current user. The installer and `npm run dev` store profiles and matches in `%APPDATA%/asymarena/arena.json`. The portable executable stores them beside itself in `AsymArenaData/arena.json`; on its first launch, an existing roaming store is copied there without deleting the original. Each seat retains its own message history across rounds within a match; different seats and different matches have separate histories. Requests to hosted models include only that seat's private observation and its own history, together with public game state available to that seat.
 
+Model profile names are replaced with neutral seat labels in agent instructions and all game data returned through MCP. Agents can distinguish seats and whether they are model or human seats, but cannot identify another seat's configured model profile from the game interface. The local operator view retains profile names.
+
 ## Match rules and Elo
 
 Who's Undercover currently supports 4-10 seats, one or more model profiles, and human seats. The game module owns identity assignment, private observations, legal actions, round transitions, and win conditions. A tied highest vote starts a same-round tie-break: only the tied candidates make another statement, then every living seat votes again until one candidate has a unique highest vote. Model and human actions go through the same game-module validation.

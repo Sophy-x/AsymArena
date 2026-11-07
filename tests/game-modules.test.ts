@@ -32,6 +32,27 @@ describe('game module contract', () => {
     expect(observation.word).toBeTruthy()
   })
 
+  it('hides model profile names from agent instructions, observations, and public tool results', () => {
+    const profileNames = ['DeepSeek V3', 'GPT-6.1', 'Claude Sonnet', 'Gemini Pro']
+    const seats = modelSeats.map((seat, index) => ({ ...seat, name: profileNames[index] }))
+    let state = undercoverGame.start(undercoverGame.create({ undercoverCount: 1 }, seats))
+    const seatId = undercoverGame.currentSeatId(state)!
+    const visibleState = undercoverGame.invoke(state, seatId, 'get_public_state', {}).result
+    const observation = undercoverGame.observation(state, seatId)
+    const instructions = undercoverGame.agentInstructions(state, seatId)
+
+    for (const profileName of profileNames) {
+      expect(JSON.stringify(visibleState)).not.toContain(profileName)
+      expect(JSON.stringify(observation.publicState)).not.toContain(profileName)
+      expect(instructions).not.toContain(profileName)
+    }
+    expect(JSON.stringify(visibleState)).toContain('AI Seat 01')
+
+    const actionResult = undercoverGame.invoke(state, seatId, 'submit_clue', { clue: '中性线索' }).result
+    expect(JSON.stringify(actionResult)).not.toContain(profileNames.join('|'))
+    for (const profileName of profileNames) expect(JSON.stringify(actionResult)).not.toContain(profileName)
+  })
+
   it('rejects actions from seats that do not own the current turn', () => {
     const state = runningState()
     const currentSeatId = undercoverGame.currentSeatId(state)!

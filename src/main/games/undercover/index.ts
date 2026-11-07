@@ -118,6 +118,29 @@ function publicSeats(state: UndercoverState, reveal = state.status === 'finished
   })
 }
 
+function agentSeatName(state: UndercoverState, seatId: string): string {
+  const seatIndex = state.seats.findIndex((seat) => seat.id === seatId)
+  const seat = findSeat(state, seatId)
+  return seat.kind === 'model' ? `AI Seat ${String(seatIndex + 1).padStart(2, '0')}` : seat.name
+}
+
+function agentSnapshot(state: UndercoverState): GameSnapshot {
+  const aliases = new Map<string, string>()
+  for (const seat of state.seats) {
+    if (seat.kind === 'model' && !aliases.has(seat.name)) aliases.set(seat.name, agentSeatName(state, seat.id))
+  }
+  const replacements = [...aliases].sort(([left], [right]) => right.length - left.length)
+  const anonymize = (value: string) => replacements.reduce((result, [name, alias]) => result.split(name).join(alias), value)
+  const snapshot = getSnapshot(state)
+  if (snapshot.currentSeatId) snapshot.currentSeatName = agentSeatName(state, snapshot.currentSeatId)
+  snapshot.seats = snapshot.seats.map((seat) => ({
+    ...seat,
+    name: seat.kind === 'model' ? agentSeatName(state, seat.id) : seat.name,
+  }))
+  snapshot.events = snapshot.events.map((event) => ({ ...event, text: anonymize(event.text) }))
+  return snapshot
+}
+
 function getSnapshot(state: UndercoverState): GameSnapshot {
   const currentSeatId =
     state.status === 'running'
@@ -349,7 +372,7 @@ export const undercoverGame: GameModule = {
     const state = raw as UndercoverState
     const seat = findSeat(state, seatId)
     return [
-      `You are ${seat.name}, seat ${seatId}, playing Who’s Undercover.`,
+      `You are ${agentSeatName(state, seatId)}, seat ${seatId}, playing Who’s Undercover.`,
       'A round has one clue from every living seat followed by one secret vote from every living seat.',
       'If the highest vote is tied, only the tied candidates make an additional statement; then all living seats vote again. Repeat until exactly one seat has the highest vote. Tied ballots do not eliminate anyone.',
       'After a unique highest vote, that seat is eliminated without revealing its role.',
@@ -410,7 +433,7 @@ export const undercoverGame: GameModule = {
       seatId,
       role: seat.role === 'undercover' ? '卧底' : '平民',
       word: seat.word,
-      publicState: getSnapshot(state),
+      publicState: agentSnapshot(state),
     }
     state.observations.push({
       seatId,
@@ -424,7 +447,7 @@ export const undercoverGame: GameModule = {
   invoke(raw, seatId, toolName, args) {
     const state = raw as UndercoverState
     const seat = findSeat(state, seatId)
-    if (toolName === 'get_public_state') return { state, result: getSnapshot(state) }
+    if (toolName === 'get_public_state') return { state, result: agentSnapshot(state) }
     if (toolName === 'get_my_observation') return { state, result: this.observation(state, seatId) }
     if (state.status !== 'running' || this.currentSeatId(state) !== seatId) throw new Error('当前不是该座位的行动回合')
 
@@ -447,7 +470,7 @@ export const undercoverGame: GameModule = {
       }
       return {
         state,
-        result: { accepted: true, publicState: getSnapshot(state) },
+        result: { accepted: true, publicState: agentSnapshot(state) },
       }
     }
 
