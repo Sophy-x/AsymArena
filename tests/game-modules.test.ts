@@ -3,7 +3,7 @@ import { createGameMcpLink } from '../src/main/mcp/link'
 import { undercoverGame } from '../src/main/games/undercover'
 import { calculateTeamElo } from '../src/main/ratings/team-elo'
 import { getRatingExclusionReason } from '../src/main/ratings/eligibility'
-import type { SeatConfig } from '../src/shared/types'
+import type { GameSnapshot, SeatConfig } from '../src/shared/types'
 import type { ChatMessage } from '../src/main/store'
 import { OpenAICompatibleProvider } from '../src/main/providers/openai-compatible'
 
@@ -127,13 +127,45 @@ describe('game module contract', () => {
     expect(undercoverGame.phase(state)).toBe('review')
   })
 
-  it('tells every model to disguise information without preassigning its role in the prompt', () => {
+  it('tells models to read public speech, infer factions, and bluff for their side', () => {
     const state = runningState()
     const instructions = undercoverGame.agentInstructions(state, modelSeats[0].id)
-    expect(instructions).toContain('make the other players misjudge what you know')
-    expect(instructions).toContain('Never state your exact word')
+    expect(instructions).toContain('call get_my_observation')
+    expect(instructions).toContain('every other seat’s previous statements')
+    expect(instructions).toContain('infer each seat’s likely faction and word')
+    expect(instructions).toContain('make your faction win')
+    expect(instructions).toContain('bluff or give plausible false clues')
+    expect(instructions).toContain('never reveal your exact word')
     expect(instructions).not.toContain('You are a civilian')
     expect(instructions).not.toContain('You are undercover')
+  })
+
+  it('makes all prior round statements available through the next round observation', () => {
+    let state = undercoverGame.start(undercoverGame.create({ undercoverCount: 1, maxRounds: 4 }, modelSeats))
+    const privateSeats = state as { seats: Array<{ id: string; role: string; alive: boolean }> }
+    const civilianTarget = privateSeats.seats.find((seat) => seat.role === 'civilian')!.id
+
+    while (undercoverGame.phase(state) === 'clue') {
+      const seatId = undercoverGame.currentSeatId(state)!
+      const response = undercoverGame.invoke(state, seatId, 'submit_clue', { clue: `round-one-${seatId}` })
+      state = response.state
+    }
+    while (undercoverGame.phase(state) === 'vote') {
+      const seatId = undercoverGame.currentSeatId(state)!
+      const alternative = privateSeats.seats.find((seat) => seat.id !== civilianTarget)!.id
+      const response = undercoverGame.invoke(state, seatId, 'submit_vote', {
+        target_seat_id: seatId === civilianTarget ? alternative : civilianTarget,
+      })
+      state = response.state
+    }
+    state = undercoverGame.next(state)
+
+    const observation = undercoverGame.observation(state, undercoverGame.currentSeatId(state)!)
+    const priorStatements = (observation.publicState as GameSnapshot).events
+      .filter((event) => event.kind === 'clue' && event.round === 1)
+      .map((event) => event.text)
+    expect(priorStatements).toHaveLength(4)
+    for (const seat of privateSeats.seats) expect(priorStatements).toContain(`round-one-${seat.id}`)
   })
 
   it('describes human turn forms from the game module action schema', () => {

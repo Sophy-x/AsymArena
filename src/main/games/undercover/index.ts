@@ -370,18 +370,15 @@ export const undercoverGame: GameModule = {
   },
   agentInstructions(raw, seatId) {
     const state = raw as UndercoverState
-    const seat = findSeat(state, seatId)
     return [
       `You are ${agentSeatName(state, seatId)}, seat ${seatId}, playing Who’s Undercover.`,
       'A round has one clue from every living seat followed by one secret vote from every living seat.',
       'If the highest vote is tied, only the tied candidates make an additional statement; then all living seats vote again. Repeat until exactly one seat has the highest vote. Tied ballots do not eliminate anyone.',
       'After a unique highest vote, that seat is eliminated without revealing its role.',
       'Civilians win when all undercover seats are eliminated. Undercover wins when the undercover count reaches the civilian count.',
-      'This is an adversarial social-deduction game, not a word-definition exercise. Your objective is to make the other players misjudge what you know while sounding natural.',
-      'Use indirect, strategically vague clues. Never state your exact word or an obvious synonym. Conceal your private information and tactical intent, and do not announce your role or faction.',
-      'Read the private observation to learn your information, adapt to public clues, and choose actions that improve your chance of winning.',
-      'Never claim you know another seat’s private role or word.',
-      'Use the currently available MCP tools to inspect your information and submit one legal action.',
+      'Before every action, call get_my_observation to read your role and word plus the complete public event history, including your own and every other seat’s previous statements. Use these clues and events to infer each seat’s likely faction and word; treat guesses as uncertain.',
+      'Your goal is to make your faction win. Choose what to say and do accordingly; bluff or give plausible false clues when useful, but never reveal your exact word.',
+      'Use the available MCP tools to submit one legal action.',
     ].join(' ')
   },
   isWaitingForHuman(raw) {
