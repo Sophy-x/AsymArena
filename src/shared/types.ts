@@ -9,11 +9,11 @@ export interface ModelProfile {
   apiKey: string
 }
 
-export type ModelProfileSummary = Omit<ModelProfile, 'apiKey'> & { hasApiKey: boolean }
+export type ModelProfileSummary = Omit<ModelProfile, 'apiKey'> & {
+  hasApiKey: boolean
+}
 
-export type SeatConfig =
-  | { id: string; kind: 'model'; profileId: string; name: string }
-  | { id: string; kind: 'human'; name: string }
+export type SeatConfig = { id: string; kind: 'model'; profileId: string; name: string } | { id: string; kind: 'human'; name: string }
 
 export interface GameDescriptor {
   id: string
@@ -84,6 +84,8 @@ export interface GameSnapshot {
   outcome?: string
   error?: string
   eloChanges?: EloChange[]
+  ratingStatus?: 'pending' | 'counted' | 'excluded'
+  ratingReason?: string
 }
 
 export interface GameEvent {
@@ -138,18 +140,32 @@ export interface MatchSummary {
 
 export interface ReplayData {
   snapshot: GameSnapshot
-  privateObservations: Array<{ seatId: string; round: number; phase: string; observation: PrivateObservation }>
-  roles: Array<{ seatId: string; name: string; role: string; word: string; alive: boolean }>
+  privateObservations: Array<{
+    seatId: string
+    round: number
+    phase: string
+    observation: PrivateObservation
+  }>
+  roles: Array<{
+    seatId: string
+    name: string
+    role: string
+    word: string
+    alive: boolean
+  }>
   ratingChanges: EloChange[]
 }
 
+export type MatchLineup = { mode: 'manual'; seats: SeatConfig[] } | { mode: 'random-models'; seatCount: number; profileIds: string[] }
+
 export interface CreateMatchInput {
   gameId: string
-  seats: SeatConfig[]
+  lineup: MatchLineup
   config: Record<string, unknown>
 }
 
 export interface ArenaBridge {
+  setTheme(theme: 'carbon' | 'paper' | 'rose'): void
   getBootstrap(): Promise<{
     games: GameDescriptor[]
     profiles: ModelProfileSummary[]
@@ -163,6 +179,7 @@ export interface ArenaBridge {
   createMatch(input: CreateMatchInput): Promise<GameSnapshot>
   getMatch(matchId: string): Promise<GameSnapshot>
   listMatches(): Promise<MatchSummary[]>
+  deleteMatch(matchId: string): Promise<void>
   startMatch(matchId: string): Promise<GameSnapshot>
   getHumanObservation(matchId: string, seatId: string): Promise<PrivateObservation>
   submitHumanAction(matchId: string, seatId: string, tool: string, args: Record<string, unknown>): Promise<GameSnapshot>

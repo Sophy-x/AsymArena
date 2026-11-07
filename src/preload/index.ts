@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { ArenaBridge, CreateMatchInput, ModelProfile } from '@shared/types'
 
 const bridge: ArenaBridge = {
+  setTheme: (theme) => ipcRenderer.send('arena:theme:set', theme),
   getBootstrap: () => ipcRenderer.invoke('arena:bootstrap'),
   saveProfile: (profile: ModelProfile) => ipcRenderer.invoke('arena:profiles:save', profile),
   deleteProfile: (profileId: string) => ipcRenderer.invoke('arena:profiles:delete', profileId),
@@ -10,9 +11,9 @@ const bridge: ArenaBridge = {
   createMatch: (input: CreateMatchInput) => ipcRenderer.invoke('arena:matches:create', input),
   getMatch: (matchId: string) => ipcRenderer.invoke('arena:matches:get', matchId),
   listMatches: () => ipcRenderer.invoke('arena:matches:list'),
+  deleteMatch: (matchId: string) => ipcRenderer.invoke('arena:matches:delete', matchId),
   startMatch: (matchId: string) => ipcRenderer.invoke('arena:matches:start', matchId),
-  getHumanObservation: (matchId: string, seatId: string) =>
-    ipcRenderer.invoke('arena:matches:human-observation', matchId, seatId),
+  getHumanObservation: (matchId: string, seatId: string) => ipcRenderer.invoke('arena:matches:human-observation', matchId, seatId),
   submitHumanAction: (matchId: string, seatId: string, tool: string, args: Record<string, unknown>) =>
     ipcRenderer.invoke('arena:matches:human-action', matchId, seatId, tool, args),
   retryMatch: (matchId: string) => ipcRenderer.invoke('arena:matches:retry', matchId),

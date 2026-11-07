@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createGameMcpLink } from '../src/main/mcp/link'
 import { undercoverGame } from '../src/main/games/undercover'
 import { calculateTeamElo } from '../src/main/ratings/team-elo'
+import { getRatingExclusionReason } from '../src/main/ratings/eligibility'
 import type { SeatConfig } from '../src/shared/types'
 import type { ChatMessage } from '../src/main/store'
 import { OpenAICompatibleProvider } from '../src/main/providers/openai-compatible'
@@ -47,31 +48,88 @@ describe('game module contract', () => {
       }
       const currentSeatId = undercoverGame.currentSeatId(state)!
       if (undercoverGame.phase(state) === 'clue') {
-        undercoverGame.invoke(state, currentSeatId, 'submit_clue', { clue: `第${undercoverGame.round(state)}轮线索${currentSeatId}` })
+        undercoverGame.invoke(state, currentSeatId, 'submit_clue', {
+          clue: `第${undercoverGame.round(state)}轮线索${currentSeatId}`,
+        })
       } else {
         const publicState = undercoverGame.publicState(state)
         const target = publicState.seats.find((seat) => seat.alive && seat.id !== currentSeatId)!
-        undercoverGame.invoke(state, currentSeatId, 'submit_vote', { target_seat_id: target.id })
+        undercoverGame.invoke(state, currentSeatId, 'submit_vote', {
+          target_seat_id: target.id,
+        })
       }
     }
     expect(undercoverGame.isFinished(state)).toBe(true)
     expect(undercoverGame.result(state)?.roles).toHaveLength(4)
+    expect(undercoverGame.publicState(state).seats.every((seat) => Boolean(seat.role && seat.word))).toBe(true)
+  })
+
+  it('has only tied top-vote seats speak again, then repeats a full vote until the top vote is unique', () => {
+    let state = undercoverGame.start(undercoverGame.create({ undercoverCount: 1, maxRounds: 4 }, modelSeats))
+    const privateState = state as { seats: Array<{ id: string; role: string; alive: boolean }> }
+    const candidates = privateState.seats
+      .filter((seat) => seat.role === 'civilian')
+      .slice(0, 2)
+      .map((seat) => seat.id)
+    const [candidateA, candidateB] = candidates
+
+    while (undercoverGame.phase(state) === 'clue') {
+      const seatId = undercoverGame.currentSeatId(state)!
+      undercoverGame.invoke(state, seatId, 'submit_clue', { clue: `线索 ${seatId}` })
+    }
+    const voters = privateState.seats.map((seat) => seat.id)
+    const outsideVoters = voters.filter((seatId) => !candidates.includes(seatId))
+    for (const seatId of voters) {
+      const target =
+        seatId === candidateA ? candidateB : seatId === candidateB ? candidateA : seatId === outsideVoters[0] ? candidateA : candidateB
+      const response = undercoverGame.invoke(state, seatId, 'submit_vote', { target_seat_id: target })
+      state = response.state
+    }
+
+    expect(undercoverGame.phaseLabel(state)).toBe('平票补充发言')
+    expect(undercoverGame.publicState(state).latestVotes).toMatchObject({ [candidateA]: 2, [candidateB]: 2 })
+    const tieSpeakers: string[] = []
+    while (undercoverGame.phase(state) === 'clue') {
+      const seatId = undercoverGame.currentSeatId(state)!
+      tieSpeakers.push(seatId)
+      undercoverGame.invoke(state, seatId, 'submit_clue', { clue: `补充说明 ${seatId}` })
+    }
+    expect(tieSpeakers.sort()).toEqual([...candidates].sort())
+    expect(undercoverGame.phaseLabel(state)).toBe('平票复投')
+
+    for (const seatId of voters) {
+      undercoverGame.invoke(state, seatId, 'submit_vote', {
+        target_seat_id: seatId === candidateA ? candidateB : candidateA,
+      })
+    }
+    expect(privateState.seats.find((seat) => seat.id === candidateA)?.alive).toBe(false)
+    expect(undercoverGame.phase(state)).toBe('review')
+  })
+
+  it('tells every model to disguise information without preassigning its role in the prompt', () => {
+    const state = runningState()
+    const instructions = undercoverGame.agentInstructions(state, modelSeats[0].id)
+    expect(instructions).toContain('make the other players misjudge what you know')
+    expect(instructions).toContain('Never state your exact word')
+    expect(instructions).not.toContain('You are a civilian')
+    expect(instructions).not.toContain('You are undercover')
   })
 
   it('describes human turn forms from the game module action schema', () => {
-    const mixedSeats: SeatConfig[] = [
-      { id: 'human', kind: 'human', name: 'Local player' },
-      ...modelSeats.slice(1),
-    ]
+    const mixedSeats: SeatConfig[] = [{ id: 'human', kind: 'human', name: 'Local player' }, ...modelSeats.slice(1)]
     let state = undercoverGame.start(undercoverGame.create({ undercoverCount: 1 }, mixedSeats))
     expect(undercoverGame.publicState(state).humanActions?.[0]).toMatchObject({
       tool: 'submit_clue',
       fields: [{ key: 'clue', type: 'text' }],
     })
-    undercoverGame.invoke(state, 'human', 'submit_clue', { clue: '一种日常物品' })
+    undercoverGame.invoke(state, 'human', 'submit_clue', {
+      clue: '一种日常物品',
+    })
     while (undercoverGame.phase(state) === 'clue') {
       const seatId = undercoverGame.currentSeatId(state)!
-      undercoverGame.invoke(state, seatId, 'submit_clue', { clue: `其他线索 ${seatId}` })
+      undercoverGame.invoke(state, seatId, 'submit_clue', {
+        clue: `其他线索 ${seatId}`,
+      })
     }
     expect(undercoverGame.publicState(state).humanActions?.[0]).toMatchObject({
       tool: 'submit_vote',
@@ -86,16 +144,17 @@ describe('game module contract', () => {
       undercoverGame,
       currentSeatId,
       () => state,
-      async (next) => { state = next },
+      async (next) => {
+        state = next
+      },
     )
     try {
       const tools = await mcp.client.listTools()
-      expect(tools.tools.map((tool) => tool.name)).toEqual([
-        'get_public_state',
-        'get_my_observation',
-        'submit_clue',
-      ])
-      const result = await mcp.client.callTool({ name: 'get_my_observation', arguments: {} })
+      expect(tools.tools.map((tool) => tool.name)).toEqual(['get_public_state', 'get_my_observation', 'submit_clue'])
+      const result = await mcp.client.callTool({
+        name: 'get_my_observation',
+        arguments: {},
+      })
       expect(result.isError).not.toBe(true)
       expect(result.structuredContent).toMatchObject({ seatId: currentSeatId })
     } finally {
@@ -110,31 +169,65 @@ describe('game module contract', () => {
       undercoverGame,
       currentSeatId,
       () => state,
-      async (next) => { state = next },
+      async (next) => {
+        state = next
+      },
     )
     const responses = [
       {
-        choices: [{ message: { tool_calls: [{ id: 'read-1', function: { name: 'get_my_observation', arguments: '{}' } }] } }],
+        choices: [
+          {
+            message: {
+              tool_calls: [
+                {
+                  id: 'read-1',
+                  function: { name: 'get_my_observation', arguments: '{}' },
+                },
+              ],
+            },
+          },
+        ],
       },
       {
-        choices: [{ message: { tool_calls: [{ id: 'act-1', function: { name: 'submit_clue', arguments: '{"clue":"清晨会喝的一种饮品"}' } }] } }],
+        choices: [
+          {
+            message: {
+              tool_calls: [
+                {
+                  id: 'act-1',
+                  function: {
+                    name: 'submit_clue',
+                    arguments: '{"clue":"清晨会喝的一种饮品"}',
+                  },
+                },
+              ],
+            },
+          },
+        ],
       },
     ]
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(responses.shift()), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    }))
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify(responses.shift()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    )
     vi.stubGlobal('fetch', fetchMock)
     const messages: ChatMessage[] = [{ role: 'system', content: 'Independent seat context.' }]
     try {
-      await new OpenAICompatibleProvider().takeTurn({
-        id: 'profile-0',
-        name: 'Agent',
-        provider: 'openai-compatible',
-        baseUrl: 'https://api.example.test/v1',
-        model: 'model-x',
-        apiKey: 'test-key',
-      }, messages, mcp)
+      await new OpenAICompatibleProvider().takeTurn(
+        {
+          id: 'profile-0',
+          name: 'Agent',
+          provider: 'openai-compatible',
+          baseUrl: 'https://api.example.test/v1',
+          model: 'model-x',
+          apiKey: 'test-key',
+        },
+        messages,
+        mcp,
+      )
       expect(undercoverGame.phase(state)).toBe('clue')
       expect(undercoverGame.currentSeatId(state)).not.toBe(currentSeatId)
       expect(messages.some((message) => message.role === 'tool')).toBe(true)
@@ -149,29 +242,189 @@ describe('game module contract', () => {
 
 describe('team Elo', () => {
   it('moves equally-rated winning and losing teams in opposite directions', () => {
-    const result = calculateTeamElo([
-      { id: 'a1', name: 'A1', profileId: 'a1', profileName: 'A1', team: 'civilian', rating: 1000 },
-      { id: 'a2', name: 'A2', profileId: 'a2', profileName: 'A2', team: 'civilian', rating: 1000 },
-      { id: 'b1', name: 'B1', profileId: 'b1', profileName: 'B1', team: 'undercover', rating: 1000 },
-      { id: 'b2', name: 'B2', profileId: 'b2', profileName: 'B2', team: 'undercover', rating: 1000 },
-    ], { winner: 'civilian' })
+    const result = calculateTeamElo(
+      [
+        {
+          id: 'a1',
+          name: 'A1',
+          profileId: 'a1',
+          profileName: 'A1',
+          team: 'civilian',
+          rating: 1000,
+        },
+        {
+          id: 'a2',
+          name: 'A2',
+          profileId: 'a2',
+          profileName: 'A2',
+          team: 'civilian',
+          rating: 1000,
+        },
+        {
+          id: 'b1',
+          name: 'B1',
+          profileId: 'b1',
+          profileName: 'B1',
+          team: 'undercover',
+          rating: 1000,
+        },
+        {
+          id: 'b2',
+          name: 'B2',
+          profileId: 'b2',
+          profileName: 'B2',
+          team: 'undercover',
+          rating: 1000,
+        },
+      ],
+      { winner: 'civilian' },
+    )
     expect(result.changes.find((change) => change.profileId === 'a1')?.delta).toBe(16)
     expect(result.changes.find((change) => change.profileId === 'b1')?.delta).toBe(-16)
   })
 
   it('uses team averages, supports draws, and only emits one rating per profile', () => {
-    const draw = calculateTeamElo([
-      { id: 'a1', name: 'A1', profileId: 'shared', profileName: 'Shared', team: 'civilian', rating: 1200 },
-      { id: 'b1', name: 'B1', profileId: 'shared', profileName: 'Shared', team: 'undercover', rating: 1200 },
-      { id: 'b2', name: 'B2', profileId: 'b2', profileName: 'B2', team: 'undercover', rating: 1000 },
-    ], { winner: null })
+    const draw = calculateTeamElo(
+      [
+        {
+          id: 'a1',
+          name: 'A1',
+          profileId: 'shared',
+          profileName: 'Shared',
+          team: 'civilian',
+          rating: 1200,
+        },
+        {
+          id: 'b1',
+          name: 'B1',
+          profileId: 'shared',
+          profileName: 'Shared',
+          team: 'undercover',
+          rating: 1200,
+        },
+        {
+          id: 'b2',
+          name: 'B2',
+          profileId: 'b2',
+          profileName: 'B2',
+          team: 'undercover',
+          rating: 1000,
+        },
+      ],
+      { winner: null },
+    )
     expect(draw.changes.filter((change) => change.profileId === 'shared')).toHaveLength(1)
     expect(draw.profileScores.get('shared')).toBe(0.5)
 
-    const upset = calculateTeamElo([
-      { id: 'a1', name: 'A1', profileId: 'a1', profileName: 'A1', team: 'civilian', rating: 1200 },
-      { id: 'b1', name: 'B1', profileId: 'b1', profileName: 'B1', team: 'undercover', rating: 1000 },
-    ], { winner: 'undercover' })
+    const upset = calculateTeamElo(
+      [
+        {
+          id: 'a1',
+          name: 'A1',
+          profileId: 'a1',
+          profileName: 'A1',
+          team: 'civilian',
+          rating: 1200,
+        },
+        {
+          id: 'b1',
+          name: 'B1',
+          profileId: 'b1',
+          profileName: 'B1',
+          team: 'undercover',
+          rating: 1000,
+        },
+      ],
+      { winner: 'undercover' },
+    )
     expect(upset.changes.find((change) => change.profileId === 'b1')!.delta).toBeGreaterThan(16)
+  })
+
+  it('averages a model appearance across factions instead of assigning it only one role result', () => {
+    const result = calculateTeamElo(
+      [
+        {
+          id: 'a1',
+          name: 'A1',
+          profileId: 'a',
+          profileName: 'A',
+          team: 'civilian',
+          rating: 1000,
+        },
+        {
+          id: 'a2',
+          name: 'A2',
+          profileId: 'a',
+          profileName: 'A',
+          team: 'civilian',
+          rating: 1000,
+        },
+        {
+          id: 'b1',
+          name: 'B civilian',
+          profileId: 'b',
+          profileName: 'B',
+          team: 'civilian',
+          rating: 1000,
+        },
+        {
+          id: 'b2',
+          name: 'B undercover',
+          profileId: 'b',
+          profileName: 'B',
+          team: 'undercover',
+          rating: 1000,
+        },
+      ],
+      { winner: 'undercover' },
+    )
+    expect(result.changes.find((change) => change.profileId === 'b')?.delta).toBe(0)
+    expect(result.changes.find((change) => change.profileId === 'a')?.delta).toBe(-16)
+  })
+})
+
+describe('rating eligibility', () => {
+  const base = {
+    gameId: 'undercover',
+    mode: 'random-models' as const,
+    modelProfileIds: ['a', 'b', 'a', 'b'],
+    humanSeats: 0,
+  }
+
+  it.each([
+    [4, 1],
+    [5, 2],
+    [6, 2],
+  ])('rates standard %i-seat games with %i undercover players', (seatCount, undercoverCount) => {
+    expect(getRatingExclusionReason({ ...base, seatCount, undercoverCount })).toBeUndefined()
+  })
+
+  it('excludes manual, nonstandard, human, and single-profile games', () => {
+    expect(
+      getRatingExclusionReason({
+        ...base,
+        mode: 'manual',
+        seatCount: 4,
+        undercoverCount: 1,
+      }),
+    ).toMatch(/手动阵容/)
+    expect(getRatingExclusionReason({ ...base, seatCount: 7, undercoverCount: 2 })).toMatch(/4、5、6/)
+    expect(getRatingExclusionReason({ ...base, seatCount: 5, undercoverCount: 1 })).toMatch(/标准配置/)
+    expect(
+      getRatingExclusionReason({
+        ...base,
+        seatCount: 4,
+        undercoverCount: 1,
+        humanSeats: 1,
+      }),
+    ).toMatch(/真人/)
+    expect(
+      getRatingExclusionReason({
+        ...base,
+        seatCount: 4,
+        undercoverCount: 1,
+        modelProfileIds: ['a', 'a'],
+      }),
+    ).toMatch(/两个不同模型/)
   })
 })

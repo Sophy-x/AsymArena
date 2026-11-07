@@ -1,15 +1,7 @@
 import { app, safeStorage } from 'electron'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type {
-  EloChange,
-  GameSnapshot,
-  MatchSummary,
-  ModelProfile,
-  RatingEntry,
-  ReplayData,
-  SeatConfig,
-} from '@shared/types'
+import type { EloChange, GameSnapshot, MatchSummary, ModelProfile, RatingEntry, ReplayData, SeatConfig } from '@shared/types'
 import type { GameResult } from './games/contracts'
 import { calculateTeamElo, modelSeatsForResult } from './ratings/team-elo'
 
@@ -18,10 +10,15 @@ export interface MatchDocument {
   gameId: string
   gameState: unknown
   seats: SeatConfig[]
+  ratingEligible: boolean
+  ratingReason?: string
+  ratingMode: 'manual' | 'random-models'
+  randomProfileIds?: string[]
   createdAt: string
   contextBySeat: Record<string, ChatMessage[]>
   ratingChanges: EloChange[]
   ratingApplied: boolean
+  ratingAppliedAt?: string
   runStatus: 'setup' | 'running' | 'waiting-human' | 'paused' | 'finished'
   error?: string
 }
@@ -38,6 +35,7 @@ export interface ChatMessage {
 }
 
 interface StoreFile {
+  ratingSchemeVersion: number
   profiles: Array<Omit<ModelProfile, 'apiKey'> & { encryptedApiKey: string }>
   matches: MatchDocument[]
   ratings: RatingEntry[]
@@ -45,7 +43,12 @@ interface StoreFile {
 
 export class ArenaStore {
   private readonly filePath: string
-  private data: StoreFile = { profiles: [], matches: [], ratings: [] }
+  private data: StoreFile = {
+    ratingSchemeVersion: 2,
+    profiles: [],
+    matches: [],
+    ratings: [],
+  }
   private ready: Promise<void>
   private writeQueue: Promise<void> = Promise.resolve()
 
@@ -60,9 +63,26 @@ export class ArenaStore {
       const raw = await readFile(this.filePath, 'utf8')
       const parsed = JSON.parse(raw) as Partial<StoreFile>
       this.data = {
+        ratingSchemeVersion: parsed.ratingSchemeVersion ?? 0,
         profiles: parsed.profiles ?? [],
         matches: parsed.matches ?? [],
         ratings: parsed.ratings ?? [],
+      }
+      if (this.data.ratingSchemeVersion < 2) {
+        this.data.ratings = []
+        this.data.matches = this.data.matches.map((match) => {
+          if (match.ratingMode) return match
+          return {
+            ...match,
+            ratingEligible: false,
+            ratingReason: '旧版本对局未记录随机模型阵容，不能计入新 Elo 榜。',
+            ratingMode: 'manual',
+            ratingApplied: match.runStatus === 'finished' || match.ratingApplied,
+            ratingChanges: [],
+          }
+        })
+        this.data.ratingSchemeVersion = 2
+        await this.flush()
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
@@ -152,34 +172,48 @@ export class ArenaStore {
     return [...this.data.matches]
   }
 
+  async deleteMatch(matchId: string, results: Map<string, GameResult>): Promise<void> {
+    await this.ensureReady()
+    const match = this.data.matches.find((entry) => entry.id === matchId)
+    if (!match) throw new Error('对局不存在')
+    if (match.runStatus === 'running' || match.runStatus === 'waiting-human') {
+      throw new Error('进行中的对局不能删除')
+    }
+    this.data.matches = this.data.matches.filter((entry) => entry.id !== matchId)
+    await this.rebuildRatings(results)
+    await this.flush()
+  }
+
   async saveMatch(document: MatchDocument): Promise<void> {
     await this.ensureReady()
-    this.data.matches = this.data.matches.map((entry) => entry.id === document.id ? document : entry)
+    this.data.matches = this.data.matches.map((entry) => (entry.id === document.id ? document : entry))
     await this.flush()
   }
 
   async ratings(gameId?: string): Promise<RatingEntry[]> {
     await this.ensureReady()
-    return this.data.ratings
-      .filter((entry) => !gameId || entry.gameId === gameId)
-      .sort((a, b) => b.rating - a.rating)
+    return this.data.ratings.filter((entry) => !gameId || entry.gameId === gameId).sort((a, b) => b.rating - a.rating)
   }
 
-  async applyTeamElo(
-    document: MatchDocument,
-    result: GameResult,
-    gameName: string,
-    kFactor = 32,
-  ): Promise<EloChange[]> {
+  async applyTeamElo(document: MatchDocument, result: GameResult, gameName: string, kFactor = 32): Promise<EloChange[]> {
     await this.ensureReady()
     if (document.ratingApplied) return document.ratingChanges
+    if (!document.ratingEligible) {
+      document.ratingApplied = true
+      document.ratingChanges = []
+      await this.saveMatch(document)
+      return []
+    }
     const profiles = await this.profiles()
     const profileById = new Map(profiles.map((profile) => [profile.id, profile]))
     const currentRatings = new Map(this.data.ratings.map((entry) => [`${entry.gameId}:${entry.profileId}`, entry]))
     const ratedModels = new Map<string, { rating: number; profileName: string }>()
     for (const [profileId, profile] of profileById) {
       const entry = currentRatings.get(`${document.gameId}:${profileId}`)
-      ratedModels.set(profileId, { rating: entry?.rating ?? 1000, profileName: profile.name })
+      ratedModels.set(profileId, {
+        rating: entry?.rating ?? 1000,
+        profileName: profile.name,
+      })
     }
     const participants = modelSeatsForResult(document.seats, result, ratedModels)
     const teamsWithModels = new Set(participants.map((participant) => participant.team))
@@ -208,9 +242,59 @@ export class ArenaStore {
     }
     this.data.ratings = [...currentRatings.values()]
     document.ratingApplied = true
+    document.ratingAppliedAt = new Date().toISOString()
     document.ratingChanges = changes
     await this.saveMatch(document)
     return changes
+  }
+
+  private async rebuildRatings(results: Map<string, GameResult>): Promise<void> {
+    const previousRatings = new Map(this.data.ratings.map((entry) => [`${entry.gameId}:${entry.profileId}`, entry]))
+    const profiles = await this.publicProfiles()
+    const profileNames = new Map(profiles.map((profile) => [profile.id, profile.name]))
+    const currentRatings = new Map<string, RatingEntry>()
+    const ratedMatches = this.data.matches
+      .filter((match) => match.runStatus === 'finished' && match.ratingEligible)
+      .sort((a, b) => (a.ratingAppliedAt ?? a.createdAt).localeCompare(b.ratingAppliedAt ?? b.createdAt))
+
+    for (const document of ratedMatches) {
+      const result = results.get(document.id)
+      if (!result) continue
+      const ratedModels = new Map<string, { rating: number; profileName: string }>()
+      for (const seat of document.seats) {
+        if (seat.kind !== 'model' || ratedModels.has(seat.profileId)) continue
+        const existing = currentRatings.get(`${document.gameId}:${seat.profileId}`)
+        ratedModels.set(seat.profileId, {
+          rating: existing?.rating ?? 1000,
+          profileName:
+            profileNames.get(seat.profileId) ?? previousRatings.get(`${document.gameId}:${seat.profileId}`)?.profileName ?? seat.name,
+        })
+      }
+      const participants = modelSeatsForResult(document.seats, result, ratedModels)
+      if (new Set(participants.map((participant) => participant.team)).size !== 2) {
+        document.ratingChanges = []
+        continue
+      }
+      const { changes, profileScores } = calculateTeamElo(participants, result)
+      for (const change of changes) {
+        const key = `${document.gameId}:${change.profileId}`
+        const existing = currentRatings.get(key)
+        const score = profileScores.get(change.profileId) ?? 0.5
+        currentRatings.set(key, {
+          gameId: document.gameId,
+          gameName: existing?.gameName ?? previousRatings.get(key)?.gameName ?? document.gameId,
+          profileId: change.profileId,
+          profileName: profileNames.get(change.profileId) ?? previousRatings.get(key)?.profileName ?? change.profileName,
+          rating: change.after,
+          games: (existing?.games ?? 0) + 1,
+          wins: (existing?.wins ?? 0) + (score === 1 ? 1 : 0),
+          updatedAt: document.ratingAppliedAt ?? document.createdAt,
+        })
+      }
+      document.ratingChanges = changes
+      document.ratingApplied = true
+    }
+    this.data.ratings = [...currentRatings.values()]
   }
 
   toSummary(document: MatchDocument, snapshot: GameSnapshot): MatchSummary {

@@ -6,6 +6,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   Bot,
+  CalendarDays,
   Check,
   ChevronDown,
   CircleHelp,
@@ -24,6 +25,7 @@ import {
   Shield,
   Sparkles,
   Trophy,
+  Trash2,
   Users,
   X,
 } from "lucide-react";
@@ -43,7 +45,29 @@ import type {
 } from "@shared/types";
 
 type Page =
-  "overview" | "matches" | "ratings" | "models" | "match" | "replay" | "setup";
+  | "overview"
+  | "matches"
+  | "ratings"
+  | "models"
+  | "match"
+  | "replay"
+  | "setup"
+  | "settings";
+type ThemeId = "carbon" | "paper" | "rose";
+
+const themes: Array<{ id: ThemeId; label: string; swatches: string[] }> = [
+  {
+    id: "carbon",
+    label: "碳素蓝",
+    swatches: ["#15191f", "#262d37", "#8cb9ff"],
+  },
+  { id: "paper", label: "雾白", swatches: ["#f0f2f5", "#ffffff", "#315fa5"] },
+  {
+    id: "rose",
+    label: "曜石玫瑰",
+    swatches: ["#171719", "#29272b", "#e398a8"],
+  },
+];
 
 const initialProfile = (): ModelProfile => ({
   id: crypto.randomUUID(),
@@ -73,6 +97,11 @@ function formatDate(value: string): string {
   }).format(date);
 }
 
+function localDateValue(value: string): string {
+  const date = new Date(value);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 function ratingDelta(entry?: EloChange): string {
   if (!entry) return "—";
   return `${entry.delta > 0 ? "+" : ""}${entry.delta.toFixed(1)}`;
@@ -80,6 +109,12 @@ function ratingDelta(entry?: EloChange): string {
 
 export default function App() {
   const [page, setPage] = useState<Page>("overview");
+  const [theme, setTheme] = useState<ThemeId>(() => {
+    const saved = localStorage.getItem("asymarena-theme");
+    return themes.some((entry) => entry.id === saved)
+      ? (saved as ThemeId)
+      : "carbon";
+  });
   const [games, setGames] = useState<GameDescriptor[]>([]);
   const [profiles, setProfiles] = useState<ModelProfileSummary[]>([]);
   const [matches, setMatches] = useState<MatchSummary[]>([]);
@@ -113,6 +148,12 @@ export default function App() {
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("asymarena-theme", theme);
+    window.arena.setTheme(theme);
+  }, [theme]);
+
   const notify = (kind: "error" | "success", text: string) => {
     setBanner({ kind, text });
     window.setTimeout(() => setBanner(null), 4800);
@@ -135,6 +176,22 @@ export default function App() {
       setReplay(await window.arena.getReplay(matchId));
     } catch (error) {
       notify("error", error instanceof Error ? error.message : "无法读取回放");
+    }
+  };
+
+  const deleteMatch = async (matchId: string) => {
+    try {
+      await window.arena.deleteMatch(matchId);
+      if (selectedMatchId === matchId) {
+        setSelectedMatchId(null);
+        setSnapshot(null);
+        setReplay(null);
+        setPage("matches");
+      }
+      await refresh();
+      notify("success", "对局记录已删除");
+    } catch (error) {
+      notify("error", error instanceof Error ? error.message : "删除对局失败");
     }
   };
 
@@ -221,7 +278,13 @@ export default function App() {
               <strong>Local Operator</strong>
               <span>桌面实例</span>
             </div>
-            <Settings2 size={16} />
+            <button
+              className="icon-button settings-shortcut"
+              title="设置"
+              onClick={() => setPage("settings")}
+            >
+              <Settings2 size={16} />
+            </button>
           </div>
         </div>
       </aside>
@@ -271,6 +334,7 @@ export default function App() {
               onNew={() => setPage("setup")}
               onOpen={openMatch}
               onReplay={openReplay}
+              onDelete={deleteMatch}
             />
           )}
           {page === "ratings" && (
@@ -284,6 +348,9 @@ export default function App() {
               editorOpen={profileEditor}
               setEditorOpen={setProfileEditor}
             />
+          )}
+          {page === "settings" && (
+            <SettingsPage theme={theme} onThemeChange={setTheme} />
           )}
           {page === "setup" && (
             <SetupPage
@@ -353,7 +420,53 @@ function pageTitle(page: Page): string {
     setup: "新建对局",
     match: "实时对局",
     replay: "对局回放",
+    settings: "外观设置",
   }[page];
+}
+
+function SettingsPage({
+  theme,
+  onThemeChange,
+}: {
+  theme: ThemeId;
+  onThemeChange: (theme: ThemeId) => void;
+}) {
+  return (
+    <>
+      <PageHeading
+        eyebrow="PREFERENCES"
+        title="外观设置"
+        subtitle="选择 AsymArena 的界面主题。"
+      />
+      <section className="surface-panel theme-settings">
+        <div className="panel-heading">
+          <div>
+            <h2>颜色主题</h2>
+            <p>主题选择会保存在本机。</p>
+          </div>
+        </div>
+        <div className="theme-options" role="radiogroup" aria-label="颜色主题">
+          {themes.map((entry) => (
+            <button
+              key={entry.id}
+              className={`theme-option ${theme === entry.id ? "selected" : ""}`}
+              role="radio"
+              aria-checked={theme === entry.id}
+              onClick={() => onThemeChange(entry.id)}
+            >
+              <span className="theme-preview" aria-hidden="true">
+                {entry.swatches.map((color) => (
+                  <i key={color} style={{ backgroundColor: color }} />
+                ))}
+              </span>
+              <strong>{entry.label}</strong>
+              {theme === entry.id && <Check size={15} />}
+            </button>
+          ))}
+        </div>
+      </section>
+    </>
+  );
 }
 
 function PageHeading({
@@ -436,7 +549,7 @@ function Overview({
         <StatCard
           label="已完成对局"
           value={complete.length.toString().padStart(2, "0")}
-          note="计入各游戏独立 Elo"
+          note="仅符合条件的随机阵容计分"
           icon={<Gamepad2 size={17} />}
           tint="amber"
         />
@@ -525,7 +638,7 @@ function Overview({
             <EmptyBlock
               icon={<Trophy size={19} />}
               title="排名尚未建立"
-              body="完成对局后自动更新模型 Elo。"
+              body="4–6 人标准配置的随机模型阵容完赛后计入 Elo。"
             />
           )}
         </section>
@@ -655,19 +768,30 @@ function MatchesPage({
   onNew,
   onOpen,
   onReplay,
+  onDelete,
 }: {
   matches: MatchSummary[];
   onNew: () => void;
   onOpen: (id: string) => void;
   onReplay: (id: string) => void;
+  onDelete: (id: string) => void;
 }) {
   const [filter, setFilter] = useState<"all" | "active" | "finished">("all");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [query, setQuery] = useState("");
   const filtered = matches.filter(
     (match) =>
-      filter === "all" ||
-      (filter === "active"
-        ? ["running", "waiting-human", "paused"].includes(match.status)
-        : match.status === "finished"),
+      (filter === "all" ||
+        (filter === "active"
+          ? ["running", "waiting-human", "paused"].includes(match.status)
+          : match.status === "finished")) &&
+      (!fromDate || localDateValue(match.createdAt) >= fromDate) &&
+      (!toDate || localDateValue(match.createdAt) <= toDate) &&
+      (!query ||
+        `${match.gameName} ${match.matchId} ${match.seats.map((seat) => seat.name).join(" ")}`
+          .toLocaleLowerCase()
+          .includes(query.toLocaleLowerCase())),
   );
   const emptyAction =
     filter === "all" ? (
@@ -724,8 +848,30 @@ function MatchesPage({
           <Search size={15} />
           <input
             placeholder="按模型或对局 ID 筛选"
-            onChange={() => undefined}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
           />
+        </div>
+        <div className="date-filter">
+          <CalendarDays size={14} />
+          <label>
+            从
+            <input
+              type="date"
+              value={fromDate}
+              max={toDate || undefined}
+              onChange={(event) => setFromDate(event.target.value)}
+            />
+          </label>
+          <label>
+            至
+            <input
+              type="date"
+              value={toDate}
+              min={fromDate || undefined}
+              onChange={(event) => setToDate(event.target.value)}
+            />
+          </label>
         </div>
       </div>
       {filtered.length ? (
@@ -737,6 +883,7 @@ function MatchesPage({
                 match={match}
                 onOpen={onOpen}
                 onReplay={onReplay}
+                onDelete={onDelete}
               />
             ))}
           </div>
@@ -763,10 +910,12 @@ function MatchRow({
   match,
   onOpen,
   onReplay,
+  onDelete,
 }: {
   match: MatchSummary;
   onOpen: (id: string) => void;
   onReplay?: (id: string) => void;
+  onDelete?: (id: string) => void;
 }) {
   const status = statusMeta(match.status);
   return (
@@ -809,6 +958,23 @@ function MatchRow({
           <ArrowRight size={14} />
         </button>
       )}
+      {onDelete && !["running", "waiting-human"].includes(match.status) && (
+        <button
+          className="icon-button danger"
+          title="删除对局记录"
+          aria-label={`删除 ${match.gameName} 对局`}
+          onClick={() => {
+            if (
+              window.confirm(
+                "删除这条对局记录及其回放？若曾计入 Elo，排行榜会按剩余有效对局重算。此操作无法撤销。",
+              )
+            )
+              onDelete(match.matchId);
+          }}
+        >
+          <Trash2 size={14} />
+        </button>
+      )}
     </div>
   );
 }
@@ -839,7 +1005,7 @@ function RatingsPage({
       <PageHeading
         eyebrow="COMPETITIVE RATINGS"
         title="Elo 排名"
-        subtitle="按游戏分别维护评分。多人阵营赛以队伍平均分估算预期赛果。"
+        subtitle="只统计随机分配模型的标准 4–6 人局，休闲对局不会影响排名。"
       />
       <div className="rating-explainer">
         <div className="rating-formula">
@@ -849,7 +1015,8 @@ function RatingsPage({
           <div>
             <strong>Team Elo · K = 32</strong>
             <p>
-              队伍平均分决定赛前预期，阵营赛果变化分数平均分配给模型座位。真人席位参与比赛，但不进入模型榜单。
+              队伍平均分决定赛前预期，模型跨阵营时按其各席位的评分变化取平均。只计随机模型阵容：4
+              人 1 卧底，5/6 人 2 卧底。
             </p>
           </div>
         </div>
@@ -1117,8 +1284,9 @@ function ModelsPage({
             </div>
           ))}
           <div className="provider-footnote">
-            只发送 API
-            必需字段与当前座位上下文。推理参数由供应商默认值处理，不做统一温度调节。
+            只发送 API 必需字段与当前座位上下文。思考强度默认为无，不发送
+            reasoning 参数；模型仍可能按服务商默认行为推理。减少额外推理 token
+            成本，不做统一温度调节。
           </div>
         </aside>
       </div>
@@ -1245,7 +1413,7 @@ function ModelsPage({
                 <Sparkles size={15} />
                 <span>
                   需要支持 Chat Completions 和 tool
-                  calling。模型上下文按座位隔离；不同模型不共享历史。
+                  calling。思考强度默认为无，不发送推理强度参数。模型仍使用服务商默认行为；同一座位会在本局各轮继承历史，但不同座位和不同对局互相隔离。
                 </span>
               </div>
             </div>
@@ -1294,6 +1462,12 @@ function SetupPage({
 }) {
   const [gameId, setGameId] = useState(games[0]?.id ?? "");
   const [seatCount, setSeatCount] = useState(6);
+  const [lineupMode, setLineupMode] = useState<"manual" | "random-models">(
+    "manual",
+  );
+  const [randomProfileIds, setRandomProfileIds] = useState<string[]>(() =>
+    profiles.slice(0, 2).map((profile) => profile.id),
+  );
   const [gameConfig, setGameConfig] = useState<Record<string, unknown>>({});
   const [seats, setSeats] = useState<SeatConfig[]>([]);
   useEffect(() => {
@@ -1317,6 +1491,16 @@ function SetupPage({
       ),
     );
   }, [seatCount, profiles]);
+  useEffect(() => {
+    setRandomProfileIds((current) => {
+      const available = current.filter((id) =>
+        profiles.some((profile) => profile.id === id),
+      );
+      return available.length >= 2
+        ? available
+        : profiles.slice(0, 2).map((profile) => profile.id);
+    });
+  }, [profiles]);
   const game = games.find((entry) => entry.id === gameId);
   useEffect(() => {
     if (!game) return;
@@ -1334,14 +1518,28 @@ function SetupPage({
         seatIndex === index ? ({ ...seat, ...patch } as SeatConfig) : seat,
       ),
     );
-  const modelSlots = seats.filter((seat) => seat.kind === "model").length;
+  const modelSlots =
+    lineupMode === "random-models"
+      ? seatCount
+      : seats.filter((seat) => seat.kind === "model").length;
+  const standardUndercoverCount: Record<number, number> = { 4: 1, 5: 2, 6: 2 };
+  const lockedUndercoverCount =
+    gameId === "undercover" ? standardUndercoverCount[seatCount] : undefined;
+  const matchConfig = {
+    ...gameConfig,
+    ...(lockedUndercoverCount
+      ? { undercoverCount: lockedUndercoverCount }
+      : {}),
+  };
   const canStart = Boolean(
     game &&
-    seats.length >= game.minSeats &&
-    seats.length <= game.maxSeats &&
-    modelSlots >= 2 &&
-    modelSlots + seats.filter((seat) => seat.kind === "human").length >=
-      game.minSeats,
+    (lineupMode === "manual"
+      ? seats.length >= game.minSeats &&
+        seats.length <= game.maxSeats &&
+        modelSlots >= 2
+      : seatCount >= game.minSeats &&
+        seatCount <= game.maxSeats &&
+        randomProfileIds.length >= 2),
   );
   return (
     <>
@@ -1403,11 +1601,15 @@ function SetupPage({
                   value={seatCount}
                   onChange={(event) => setSeatCount(Number(event.target.value))}
                 >
-                  {Array.from({ length: 7 }, (_, index) => index + 4).map(
-                    (count) => (
-                      <option key={count}>{count}</option>
-                    ),
-                  )}
+                  {Array.from(
+                    {
+                      length:
+                        (game?.maxSeats ?? 10) - (game?.minSeats ?? 4) + 1,
+                    },
+                    (_, index) => index + (game?.minSeats ?? 4),
+                  ).map((count) => (
+                    <option key={count}>{count}</option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -1422,17 +1624,72 @@ function SetupPage({
                 </button>
               </div>
             )}
-            <div className="seat-editor">
-              {seats.map((seat, index) => (
-                <SeatEditor
-                  key={seat.id}
-                  index={index}
-                  seat={seat}
-                  profiles={profiles}
-                  onChange={(patch) => updateSeat(index, patch)}
-                />
-              ))}
+            <div
+              className="lineup-modes"
+              role="group"
+              aria-label="阵容分配方式"
+            >
+              <button
+                className={lineupMode === "manual" ? "selected" : ""}
+                onClick={() => setLineupMode("manual")}
+              >
+                手动安排
+              </button>
+              <button
+                className={lineupMode === "random-models" ? "selected" : ""}
+                onClick={() => setLineupMode("random-models")}
+              >
+                随机分配模型
+              </button>
             </div>
+            {lineupMode === "manual" ? (
+              <div className="seat-editor">
+                {seats.map((seat, index) => (
+                  <SeatEditor
+                    key={seat.id}
+                    index={index}
+                    seat={seat}
+                    profiles={profiles}
+                    onChange={(patch) => updateSeat(index, patch)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="model-pool">
+                <div className="pool-heading">
+                  <strong>随机模型池</strong>
+                  <span>已选 {randomProfileIds.length} 个</span>
+                </div>
+                {profiles.map((profile) => {
+                  const checked = randomProfileIds.includes(profile.id);
+                  return (
+                    <label
+                      className={`pool-model ${checked ? "selected" : ""}`}
+                      key={profile.id}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          setRandomProfileIds((current) =>
+                            checked
+                              ? current.filter((id) => id !== profile.id)
+                              : [...current, profile.id],
+                          )
+                        }
+                      />
+                      <span>
+                        <strong>{profile.name}</strong>
+                        <small>{profile.model}</small>
+                      </span>
+                    </label>
+                  );
+                })}
+                <p>
+                  每个座位独立、等概率地从模型池抽取；同一模型可以分配到多个座位。
+                </p>
+              </div>
+            )}
           </section>
         </div>
         <aside className="setup-side">
@@ -1447,7 +1704,11 @@ function SetupPage({
             {game?.configFields.map((field) => (
               <label className="field" key={field.key}>
                 <span>{field.label}</span>
-                {field.type === "select" ? (
+                {field.key === "undercoverCount" && lockedUndercoverCount ? (
+                  <div className="locked-config">
+                    {lockedUndercoverCount} 名卧底 · 标准人数规则
+                  </div>
+                ) : field.type === "select" ? (
                   <select
                     value={String(gameConfig[field.key] ?? field.defaultValue)}
                     onChange={(event) =>
@@ -1497,20 +1758,38 @@ function SetupPage({
               </div>
               <div>
                 <span>真人座位</span>
-                <strong>{seats.length - modelSlots}</strong>
+                <strong>
+                  {lineupMode === "random-models"
+                    ? 0
+                    : seats.length - modelSlots}
+                </strong>
               </div>
             </div>
             <div className="elo-notice">
               <Trophy size={15} />
               <p>
-                完成对局后更新本游戏的
-                team-Elo。真人座位参与赛果，不计入模型榜。
+                {lineupMode === "random-models"
+                  ? "仅 4 人 1 卧底、5/6 人 2 卧底的随机模型阵容计入 Elo；其他配置作为休闲对局。"
+                  : "手动阵容不计入 Elo。使用随机模型阵容，且至少选择两个模型。"}
               </p>
             </div>
             <button
               className="button primary full"
               disabled={!canStart}
-              onClick={() => onStart({ gameId, seats, config: gameConfig })}
+              onClick={() =>
+                onStart({
+                  gameId,
+                  lineup:
+                    lineupMode === "manual"
+                      ? { mode: "manual", seats }
+                      : {
+                          mode: "random-models",
+                          seatCount,
+                          profileIds: randomProfileIds,
+                        },
+                  config: matchConfig,
+                })
+              }
             >
               <Gamepad2 size={16} />
               创建并开赛
@@ -1698,6 +1977,33 @@ function MatchPage({
               )}
             </div>
           </div>
+          {snapshot.status === "finished" && (
+            <section className="surface-panel final-reveal">
+              <div className="panel-heading">
+                <div>
+                  <h2>身份与词语揭晓</h2>
+                  <p>{snapshot.outcome}</p>
+                </div>
+                <Eye size={16} />
+              </div>
+              <div className="final-reveal-grid">
+                {snapshot.seats.map((seat) => (
+                  <div className="final-reveal-seat" key={seat.id}>
+                    <div>
+                      <strong>{seat.name}</strong>
+                      <span>{seat.alive ? "存活至终局" : "已被淘汰"}</span>
+                    </div>
+                    <span
+                      className={`role-tag ${seat.role === "卧底" ? "undercover" : "civilian"}`}
+                    >
+                      {seat.role}
+                    </span>
+                    <strong className="revealed-word">{seat.word}</strong>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
           {snapshot.error && (
             <div className="error-banner">
               <CircleHelp size={16} />
@@ -1866,7 +2172,7 @@ function MatchPage({
             <h3>隔离上下文</h3>
             <p>
               每个 AI
-              座位维护独立消息历史。模型只会收到自己的私有观察和游戏公开区。
+              同一座位在本局各轮继承消息历史；不同座位和不同对局均隔离。模型只会收到自己的私有观察和游戏公开区。
             </p>
             <div className="privacy-check">
               <Check size={13} />
@@ -1881,7 +2187,9 @@ function MatchPage({
             <span className="eyebrow">TEAM ELO</span>
             <h3>评分方式</h3>
             <p>
-              按游戏分别评分，使用阵营平均分估算赛前胜率；真人座位不计入模型排名。
+              {snapshot.ratingStatus === "excluded"
+                ? (snapshot.ratingReason ?? "本局未计入 Elo。")
+                : "随机阵容按阵营平均分估算赛前胜率；本局完成后更新模型评分。"}
             </p>
             <button
               className="text-button"
@@ -1916,9 +2224,16 @@ function HumanActionCard({
   submitting: boolean;
   onSubmit: (tool: string, args: Record<string, unknown>) => void;
 }) {
-  const action = snapshot.humanActions?.[0]
-  const args = Object.fromEntries((action?.fields ?? []).map((field) => [field.key, values[field.key] ?? '']))
-  const ready = Boolean(action && action.fields.every((field) => !field.required || String(args[field.key]).trim()))
+  const action = snapshot.humanActions?.[0];
+  const args = Object.fromEntries(
+    (action?.fields ?? []).map((field) => [field.key, values[field.key] ?? ""]),
+  );
+  const ready = Boolean(
+    action &&
+    action.fields.every(
+      (field) => !field.required || String(args[field.key]).trim(),
+    ),
+  );
   return (
     <section className="human-turn-panel">
       <div className="human-turn-title">
@@ -1973,29 +2288,49 @@ function HumanActionCard({
       )}
       {revealed && action && (
         <div className="human-action-form">
-          {action.description && <p className="human-action-description">{action.description}</p>}
+          {action.description && (
+            <p className="human-action-description">{action.description}</p>
+          )}
           {action.fields.map((field) => (
             <label className="field" key={field.key}>
               <span>{field.label}</span>
-              {field.type === 'select' ? (
-                <select value={values[field.key] ?? ''} onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}>
+              {field.type === "select" ? (
+                <select
+                  value={values[field.key] ?? ""}
+                  onChange={(event) =>
+                    setValues({ ...values, [field.key]: event.target.value })
+                  }
+                >
                   <option value="">请选择</option>
-                  {field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  {field.options?.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               ) : (
                 <input
                   maxLength={field.maxLength}
-                  value={values[field.key] ?? ''}
+                  value={values[field.key] ?? ""}
                   placeholder={field.placeholder}
-                  onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}
-                  onKeyDown={(event) => { if (event.key === 'Enter' && ready) onSubmit(action.tool, args) }}
+                  onChange={(event) =>
+                    setValues({ ...values, [field.key]: event.target.value })
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && ready)
+                      onSubmit(action.tool, args);
+                  }}
                 />
               )}
             </label>
           ))}
           <div className="form-footer">
             <span>行动由所选游戏模块校验</span>
-            <button className="button primary small" disabled={!ready || submitting} onClick={() => onSubmit(action.tool, args)}>
+            <button
+              className="button primary small"
+              disabled={!ready || submitting}
+              onClick={() => onSubmit(action.tool, args)}
+            >
               {submitting ? <LoaderCircle size={14} className="spin" /> : null}
               {action.label} <ArrowRight size={14} />
             </button>
@@ -2224,7 +2559,9 @@ function ReplayPage({
           </div>
         ) : (
           <div className="no-rating-change">
-            本局包含平局或没有模型座位，因此没有 Elo 变化。
+            {replay.snapshot.ratingStatus === "excluded"
+              ? `本局未计入 Elo：${replay.snapshot.ratingReason ?? "不符合评分条件。"}`
+              : "本局没有可显示的 Elo 变化。"}
           </div>
         )}
       </section>
