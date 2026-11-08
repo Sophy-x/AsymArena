@@ -363,7 +363,7 @@ describe('game module contract', () => {
     }
   })
 
-  it('requires a structured tool call during voting', async () => {
+  it('falls back to auto tool choice when thinking mode rejects required during voting', async () => {
     let state = runningState()
     while (undercoverGame.phase(state) === 'clue') {
       const seatId = undercoverGame.currentSeatId(state)!
@@ -380,23 +380,27 @@ describe('game module contract', () => {
         state = next
       },
     )
-    const fetchMock = vi.fn(
-      async (_input: RequestInfo | URL, _init?: RequestInit) =>
-        new Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: {
-                  tool_calls: [
-                    { id: 'vote-1', function: { name: 'submit_vote', arguments: JSON.stringify({ target_seat_id: targetSeatId }) } },
-                  ],
-                },
+    const responses = [
+      new Response(JSON.stringify({ error: { message: 'Thinking mode does not support this tool_choice' } }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  { id: 'vote-1', function: { name: 'submit_vote', arguments: JSON.stringify({ target_seat_id: targetSeatId }) } },
+                ],
               },
-            ],
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
-    )
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    ]
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => responses.shift()!)
     vi.stubGlobal('fetch', fetchMock)
 
     try {
@@ -408,8 +412,9 @@ describe('game module contract', () => {
         'required',
       )
 
-      const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
-      expect(request.tool_choice).toBe('required')
+      const requests = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))
+      expect(requests.map((request) => request.tool_choice)).toEqual(['required', 'auto'])
+      expect(requests.every((request) => request.reasoning_effort === 'low')).toBe(true)
       expect((state as { votes: Record<string, string> }).votes[seatId]).toBe(targetSeatId)
     } finally {
       await mcp.close()

@@ -127,6 +127,7 @@ export class OpenAICompatibleProvider {
     body?: Record<string, unknown>,
     method = 'POST',
     onThought?: (text: string) => Promise<void>,
+    allowThinkingToolChoiceFallback = true,
   ): Promise<unknown> {
     const base = profile.baseUrl.trim().replace(/\/+$/, '')
     if (!base) throw new ProviderError('Base URL is required')
@@ -158,6 +159,15 @@ export class OpenAICompatibleProvider {
     }
     if (!response.ok) {
       const detail = payload.error?.message ?? text.slice(0, 400)
+      if (
+        allowThinkingToolChoiceFallback &&
+        response.status === 400 &&
+        body?.reasoning_effort === 'low' &&
+        body.tool_choice === 'required' &&
+        /thinking mode does not support this tool_choice/i.test(detail)
+      ) {
+        return this.request(profile, path, { ...body, tool_choice: 'auto' }, method, onThought, false)
+      }
       throw new ProviderError(`HTTP ${response.status}: ${detail}`, response.status)
     }
     if (onThought) {
