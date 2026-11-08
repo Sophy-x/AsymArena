@@ -44,7 +44,7 @@ AsymArena 是一个面向 AI 游戏实验和对战的本地桌面软件。首版
 
 - 首发游戏：谁是卧底。
 - 智能体接入：OpenAI-compatible Chat Completions tool calling；提供 OpenAI、Gemini-compatible 和自定义 endpoint 配置。
-- 模型档案：保存显示名称、Base URL、模型 ID 和 API Key，可测试连通性和读取模型列表；平台思考强度为无，不发送 reasoning-effort 参数，模型仍遵循服务商默认行为。
+- 模型档案：保存显示名称、Base URL、模型 ID 和 API Key，可测试连通性和读取模型列表；Chat Completions 请求统一携带 `reasoning_effort: low`，端点不支持时可能拒绝请求。
 - MCP：每个游戏模块注册自己的 MCP 工具；内置模型适配器通过 MCP SDK 调用工具，真人行动也经过同一模块校验。
 - 信息隔离：游戏核心保存完整状态，只向每个智能体发送该角色获准看到的观察。
 - 对局展示：桌面 UI 展示公开事件、当前阶段和结果，不泄漏其他角色私有信息。

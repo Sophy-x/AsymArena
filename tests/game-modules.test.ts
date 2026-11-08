@@ -355,6 +355,7 @@ describe('game module contract', () => {
       expect(messages.some((message) => message.role === 'tool')).toBe(true)
       const requests = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))
       expect(requests[0]).not.toHaveProperty('temperature')
+      expect(requests.every((request) => request.reasoning_effort === 'low')).toBe(true)
       expect(requests[0].tools.length).toBe(3)
     } finally {
       await mcp.close()

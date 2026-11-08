@@ -40,7 +40,7 @@ The first launch after this rating change starts a fresh Elo baseline because ea
 
 The Who's Undercover module lives in `src/main/games/undercover/`: `index.ts` implements the rules and prompt, and `words.json` stores the civilian/undercover word pairs. Future game modules can use their own directories for source, JSON data, images, audio, and other imported assets. The prompt is in `undercoverGame.agentInstructions`; it explicitly names Who's Undercover and asks agents to conceal private information and use indirect clues without preassigning their role. Each seat's role and word still come from its private game observation. Theme selection is under Settings and is stored locally.
 
-Thinking intensity is set to none by the app: no reasoning-effort parameter is sent. The model may still use its provider's default behavior, but the app does not explicitly request extra reasoning tokens. This avoids provider-specific controls and their potential additional token cost. Elo is not split by reasoning intensity. Within one match, a seat's model history carries across its turns; another seat or match receives a separate history.
+The app sends `reasoning_effort: "low"` with every Chat Completions request, including connection tests and match turns. This is an explicit request, not a guarantee that a model performs no reasoning; providers may interpret it differently or reject the parameter if their compatible endpoint does not support it. Elo is not split by reasoning effort. Within one match, a seat's model history carries across its turns; another seat or match receives a separate history.
 
 ## MCP extension point
 

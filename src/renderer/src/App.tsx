@@ -1293,9 +1293,7 @@ function ModelsPage({
             </div>
           ))}
           <div className="provider-footnote">
-            只发送 API 必需字段与当前座位上下文。思考强度默认为无，不发送
-            reasoning 参数；模型仍可能按服务商默认行为推理。减少额外推理 token
-            成本，不做统一温度调节。
+            对 Chat Completions 请求 reasoning_effort=low。若兼容接口不支持此参数，连接或对局请求可能失败；不设置统一温度。
           </div>
         </aside>
       </div>
@@ -1423,7 +1421,7 @@ function ModelsPage({
                 <Sparkles size={15} />
                 <span>
                   需要支持 Chat Completions 和 tool
-                  calling。思考强度默认为无，不发送推理强度参数。模型仍使用服务商默认行为；同一座位会在本局各轮继承历史，但不同座位和不同对局互相隔离。
+                  calling。应用请求 reasoning_effort=low；端点不支持时可能拒绝请求。模型仍可能进行内部推理；同一座位会在本局各轮继承历史，但不同座位和不同对局互相隔离。
                 </span>
               </div>
             </div>

@@ -104,7 +104,7 @@ export class OpenAICompatibleProvider {
     tools?: Array<Record<string, unknown>>,
     onThought?: (text: string) => Promise<void>,
   ): Promise<ChatCompletionResponse> {
-    const body: Record<string, unknown> = { model: profile.model, messages }
+    const body: Record<string, unknown> = { model: profile.model, messages, reasoning_effort: 'low' }
     if (tools) {
       body.tools = tools
       body.tool_choice = 'auto'
