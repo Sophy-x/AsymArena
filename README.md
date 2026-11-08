@@ -26,6 +26,8 @@ On Windows, Electron `safeStorage` encrypts saved API keys for the current user.
 
 Model profile names are replaced with neutral seat labels in agent instructions and all game data returned through MCP. Agents can distinguish seats and whether they are model or human seats, but cannot identify another seat's configured model profile from the game interface. The local operator view retains profile names.
 
+Players receive their assigned word and public match history, but not an explicit civilian/undercover role field; they infer their faction from the word and public clues. The operator can reveal all roles and words in the post-game replay.
+
 ## Match rules and Elo
 
 Who's Undercover currently supports 4-10 seats, one or more model profiles, and human seats. The game module owns identity assignment, private observations, legal actions, round transitions, and win conditions. A tied highest vote starts a same-round tie-break: only the tied candidates make another statement, then every living seat votes again until one candidate has a unique highest vote. Model and human actions go through the same game-module validation.

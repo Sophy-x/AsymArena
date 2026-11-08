@@ -2,7 +2,9 @@ import type { ChatMessage } from './store'
 
 export function refreshSystemPrompt(messages: ChatMessage[], content: string): void {
   if (messages[0]?.role === 'system') {
-    messages[0].content = content
+    if (messages[0].content !== content) {
+      messages.splice(0, messages.length, { role: 'system', content })
+    }
   } else {
     messages.unshift({ role: 'system', content })
   }

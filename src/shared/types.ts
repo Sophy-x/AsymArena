@@ -114,6 +114,8 @@ export interface PrivateObservation {
   publicState: unknown
 }
 
+export type PlayerObservation = Omit<PrivateObservation, 'role'>
+
 export interface EloChange {
   profileId: string
   profileName: string
@@ -192,7 +194,7 @@ export interface ArenaBridge {
   listMatches(): Promise<MatchSummary[]>
   deleteMatch(matchId: string): Promise<void>
   startMatch(matchId: string): Promise<GameSnapshot>
-  getHumanObservation(matchId: string, seatId: string): Promise<PrivateObservation>
+  getHumanObservation(matchId: string, seatId: string): Promise<PlayerObservation>
   submitHumanAction(matchId: string, seatId: string, tool: string, args: Record<string, unknown>): Promise<GameSnapshot>
   retryMatch(matchId: string): Promise<GameSnapshot>
   getReplay(matchId: string): Promise<ReplayData>

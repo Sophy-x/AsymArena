@@ -1,5 +1,5 @@
 import type { ZodTypeAny } from 'zod'
-import type { GameDescriptor, GameEvent, GameSnapshot, HumanActionSpec, PrivateObservation, SeatConfig } from '@shared/types'
+import type { GameDescriptor, GameEvent, GameSnapshot, HumanActionSpec, PlayerObservation, PrivateObservation, SeatConfig } from '@shared/types'
 
 export interface GameTool {
   name: string
@@ -34,6 +34,8 @@ export interface GameModule {
   next(state: unknown): unknown
   tools(state: unknown): GameTool[]
   observation(state: unknown, seatId: string): PrivateObservation
+  playerObservation(state: unknown, seatId: string): PlayerObservation
+  modelObservation(state: unknown, seatId: string): { state: unknown; result: PlayerObservation }
   invoke(state: unknown, seatId: string, toolName: string, args: Record<string, unknown>): { state: unknown; result: unknown }
   publicState(state: unknown): GameSnapshot
   events(state: unknown): GameEvent[]

@@ -26,7 +26,11 @@ export async function createGameMcpLink(
       { description: tool.description, inputSchema: tool.inputSchema },
       async (args): Promise<CallToolResult> => {
         try {
-          const { state, result } = game.invoke(readState(), seatId, tool.name, args)
+          const invocation =
+            tool.name === 'get_my_observation'
+              ? game.modelObservation(readState(), seatId)
+              : game.invoke(readState(), seatId, tool.name, args)
+          const { state, result } = invocation
           await writeState(state)
           return {
             content: [{ type: 'text', text: JSON.stringify(result) }],

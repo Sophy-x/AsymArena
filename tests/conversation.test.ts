@@ -14,7 +14,7 @@ function toolReply(id: string): ChatMessage {
 }
 
 describe('model conversation history', () => {
-  it('refreshes old matches with the current system prompt without dropping their history', () => {
+  it('clears old seat history when refreshing a changed system prompt', () => {
     const messages: ChatMessage[] = [
       { role: 'system', content: 'old instructions' },
       { role: 'user', content: 'prior turn' },
@@ -22,8 +22,19 @@ describe('model conversation history', () => {
 
     refreshSystemPrompt(messages, 'new instructions')
 
+    expect(messages).toEqual([{ role: 'system', content: 'new instructions' }])
+  })
+
+  it('preserves seat history when the system prompt has not changed', () => {
+    const messages: ChatMessage[] = [
+      { role: 'system', content: 'current instructions' },
+      { role: 'user', content: 'prior turn' },
+    ]
+
+    refreshSystemPrompt(messages, 'current instructions')
+
     expect(messages).toEqual([
-      { role: 'system', content: 'new instructions' },
+      { role: 'system', content: 'current instructions' },
       { role: 'user', content: 'prior turn' },
     ])
   })

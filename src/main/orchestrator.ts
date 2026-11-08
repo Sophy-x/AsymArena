@@ -6,7 +6,7 @@ import type {
   GameSnapshot,
   MatchSummary,
   ModelProfile,
-  PrivateObservation,
+  PlayerObservation,
   RatingEntry,
   ReplayData,
   SeatConfig,
@@ -182,7 +182,7 @@ export class MatchOrchestrator {
     return this.snapshot(document)
   }
 
-  async getHumanObservation(matchId: string, seatId: string): Promise<PrivateObservation> {
+  async getHumanObservation(matchId: string, seatId: string): Promise<PlayerObservation> {
     const document = await this.store.match(matchId)
     const seat = document.seats.find((candidate) => candidate.id === seatId)
     if (!seat || seat.kind !== 'human') throw new Error('This seat is not a human seat')
@@ -190,7 +190,7 @@ export class MatchOrchestrator {
     if (game.currentSeatId(document.gameState) !== seatId || !game.isWaitingForHuman(document.gameState)) {
       throw new Error('It is not this human seat’s turn')
     }
-    const observation = game.observation(document.gameState, seatId)
+    const observation = game.playerObservation(document.gameState, seatId)
     await this.store.saveMatch(document)
     return observation
   }

@@ -39,7 +39,7 @@ import type {
   MatchSummary,
   ModelProfile,
   ModelProfileSummary,
-  PrivateObservation,
+  PlayerObservation,
   PublicSeat,
   RatingEntry,
   ReplayData,
@@ -1948,7 +1948,7 @@ function MatchPage({
   const activeSeat = snapshot.seats.find(
     (seat) => seat.id === snapshot.currentSeatId,
   );
-  const [observation, setObservation] = useState<PrivateObservation | null>(
+  const [observation, setObservation] = useState<PlayerObservation | null>(
     null,
   );
   const [revealed, setRevealed] = useState(false);
@@ -2274,7 +2274,7 @@ function MatchPage({
             <h3>隔离上下文</h3>
             <p>
               每个 AI
-              同一座位在本局各轮继承消息历史；不同座位和不同对局均隔离。模型只会收到自己的私有观察和游戏公开区。
+              同一座位在本局各轮继承消息历史；不同座位和不同对局均隔离。玩家仅获得自己的词语，阵营身份需结合公开信息自行推断。
             </p>
             <div className="privacy-check">
               <Check size={13} />
@@ -2318,7 +2318,7 @@ function HumanActionCard({
   onSubmit,
 }: {
   snapshot: GameSnapshot;
-  observation: PrivateObservation | null;
+  observation: PlayerObservation | null;
   revealed: boolean;
   setRevealed: (value: boolean) => void;
   values: Record<string, string>;
@@ -2355,26 +2355,18 @@ function HumanActionCard({
       </div>
       {!revealed ? (
         <div className="reveal-row">
-          <p>这是你的私有信息。确认当前操作设备由你使用后再查看。</p>
+          <p>这是你的私有词语。结合公开线索自行判断身份。</p>
           <button
             className="button secondary"
             disabled={!observation}
             onClick={() => setRevealed(true)}
           >
             <Eye size={14} />
-            {observation ? "查看我的身份" : "正在载入私有区"}
+            {observation ? "查看我的词语" : "正在载入私有区"}
           </button>
         </div>
       ) : (
         <div className="human-private">
-          <div>
-            <span>你的身份</span>
-            <strong
-              className={observation?.role === "卧底" ? "undercover-word" : ""}
-            >
-              {observation?.role}
-            </strong>
-          </div>
           <div>
             <span>你的词语</span>
             <strong>{observation?.word}</strong>
@@ -2382,7 +2374,7 @@ function HumanActionCard({
           <button
             className="icon-button"
             onClick={() => setRevealed(false)}
-            title="隐藏身份"
+            title="隐藏词语"
           >
             <EyeOff size={15} />
           </button>

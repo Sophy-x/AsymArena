@@ -32,6 +32,21 @@ describe('game module contract', () => {
     expect(observation.word).toBeTruthy()
   })
 
+  it('gives model seats their word without disclosing their faction', () => {
+    const state = runningState()
+    const seatId = undercoverGame.currentSeatId(state)!
+    const modelView = undercoverGame.modelObservation(state, seatId).result
+    const humanView = undercoverGame.observation(state, seatId)
+
+    expect(modelView).toHaveProperty('word', humanView.word)
+    expect(modelView).not.toHaveProperty('role')
+    expect(humanView.role).toMatch(/平民|卧底/)
+
+    const playerView = undercoverGame.playerObservation(state, seatId)
+    expect(playerView).toHaveProperty('word', humanView.word)
+    expect(playerView).not.toHaveProperty('role')
+  })
+
   it('hides model profile names from agent instructions, observations, and public tool results', () => {
     const profileNames = ['DeepSeek V3', 'GPT-6.1', 'Claude Sonnet', 'Gemini Pro']
     const seats = modelSeats.map((seat, index) => ({ ...seat, name: profileNames[index] }))
@@ -158,8 +173,9 @@ describe('game module contract', () => {
     const state = runningState()
     const instructions = undercoverGame.agentInstructions(state, modelSeats[0].id)
     expect(instructions).toContain('call get_my_observation')
+    expect(instructions).toContain('Your faction is not disclosed')
     expect(instructions).toContain('every other seat’s previous statements')
-    expect(instructions).toContain('infer each seat’s likely faction and word')
+    expect(instructions).toContain('infer your own and each other seat’s likely faction')
     expect(instructions).toContain('Hide your own faction')
     expect(instructions).toContain('every clue is visible to all seats')
     expect(instructions).toContain('make your faction win')
@@ -240,6 +256,8 @@ describe('game module contract', () => {
       })
       expect(result.isError).not.toBe(true)
       expect(result.structuredContent).toMatchObject({ seatId: currentSeatId })
+      expect(result.structuredContent).toHaveProperty('word')
+      expect(result.structuredContent).not.toHaveProperty('role')
     } finally {
       await mcp.close()
     }

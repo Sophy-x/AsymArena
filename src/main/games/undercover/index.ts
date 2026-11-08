@@ -55,7 +55,7 @@ const toolSpecs: GameTool[] = [
   },
   {
     name: 'get_my_observation',
-    description: 'Read your own role, word, and current public state.',
+    description: 'Read your assigned word and current public state. Your faction is not disclosed; infer it from the clues.',
     inputSchema: {},
     jsonSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
@@ -382,7 +382,7 @@ export const undercoverGame: GameModule = {
       'If the highest vote is tied, only the tied candidates make an additional statement; then all living seats vote again. Repeat until exactly one seat has the highest vote. Tied ballots do not eliminate anyone.',
       'After a unique highest vote, that seat is eliminated without revealing its role.',
       'Civilians win when all undercover seats are eliminated. Undercover wins when the undercover count reaches the civilian count.',
-      'Before every action, call get_my_observation to read your role and word plus the complete public event history, including your own and every other seat’s previous statements. Use these clues and events to infer each seat’s likely faction and word; treat guesses as uncertain.',
+      'Before every action, call get_my_observation to read your assigned word and the complete public event history, including your own and every other seat’s previous statements. Your faction is not disclosed; infer your own and each other seat’s likely faction from the word and public clues. Treat guesses as uncertain.',
       'Hide your own faction: every clue is visible to all seats, so avoid wording that reveals your role or makes your word easy for opponents to identify.',
       'Your goal is to make your faction win. For every clue, prioritize protecting your word over explaining it: use a short, broad, indirect association that could plausibly fit several words. You may be deliberately ambiguous, evasive or mildly misleading when strategically useful. Avoid lists of distinctive features, precise functions, specific settings, obvious synonyms and descriptions that let others immediately guess the word. Give only a minimal signal, not a definition or a detailed explanation. Never state your exact word.',
       'Each clue or additional statement must contribute a new point: do not repeat or paraphrase any earlier statement in this game, including your own.',
@@ -448,6 +448,16 @@ export const undercoverGame: GameModule = {
       observation,
     })
     return observation
+  },
+
+  playerObservation(raw, seatId) {
+    const { role: _role, ...observation } = this.observation(raw, seatId)
+    return observation
+  },
+
+  modelObservation(raw, seatId) {
+    const state = raw as UndercoverState
+    return { state, result: this.playerObservation(state, seatId) }
   },
 
   invoke(raw, seatId, toolName, args) {
