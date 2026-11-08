@@ -356,7 +356,61 @@ describe('game module contract', () => {
       const requests = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))
       expect(requests[0]).not.toHaveProperty('temperature')
       expect(requests.every((request) => request.reasoning_effort === 'low')).toBe(true)
+      expect(requests.every((request) => request.tool_choice === 'auto')).toBe(true)
       expect(requests[0].tools.length).toBe(3)
+    } finally {
+      await mcp.close()
+    }
+  })
+
+  it('requires a structured tool call during voting', async () => {
+    let state = runningState()
+    while (undercoverGame.phase(state) === 'clue') {
+      const seatId = undercoverGame.currentSeatId(state)!
+      state = undercoverGame.invoke(state, seatId, 'submit_clue', { clue: `vote-test-${seatId}` }).state
+    }
+
+    const seatId = undercoverGame.currentSeatId(state)!
+    const targetSeatId = undercoverGame.publicState(state).seats.find((seat) => seat.alive && seat.id !== seatId)!.id
+    const mcp = await createGameMcpLink(
+      undercoverGame,
+      seatId,
+      () => state,
+      async (next) => {
+        state = next
+      },
+    )
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  tool_calls: [
+                    { id: 'vote-1', function: { name: 'submit_vote', arguments: JSON.stringify({ target_seat_id: targetSeatId }) } },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    try {
+      await new OpenAICompatibleProvider().takeTurn(
+        { id: 'p', name: 'Agent', provider: 'openai-compatible', baseUrl: 'https://example.test', model: 'm', apiKey: 'key' },
+        [{ role: 'system', content: 'test' }],
+        mcp,
+        undefined,
+        'required',
+      )
+
+      const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+      expect(request.tool_choice).toBe('required')
+      expect((state as { votes: Record<string, string> }).votes[seatId]).toBe(targetSeatId)
     } finally {
       await mcp.close()
     }

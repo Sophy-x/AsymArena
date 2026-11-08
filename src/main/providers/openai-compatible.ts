@@ -36,7 +36,13 @@ export class OpenAICompatibleProvider {
     return `Connected · ${profile.model}`
   }
 
-  async takeTurn(profile: ModelProfile, messages: ChatMessage[], mcp: GameMcpLink, onThought?: (text: string, isNew: boolean) => void | Promise<void>): Promise<void> {
+  async takeTurn(
+    profile: ModelProfile,
+    messages: ChatMessage[],
+    mcp: GameMcpLink,
+    onThought?: (text: string, isNew: boolean) => void | Promise<void>,
+    toolChoice: 'auto' | 'required' = 'auto',
+  ): Promise<void> {
     const toolList = await mcp.client.listTools()
     const tools = toolList.tools.map((tool) => ({
       type: 'function',
@@ -53,7 +59,7 @@ export class OpenAICompatibleProvider {
         await onThought?.(text, !hasThought)
         hasThought = true
       }
-      const response = await this.complete(profile, messages, tools, emitThought)
+      const response = await this.complete(profile, messages, tools, emitThought, toolChoice)
       const message = response.choices?.[0]?.message
       if (!message) throw new ProviderError('Model response contained no message')
       const toolCalls = message.tool_calls ?? []
@@ -103,11 +109,12 @@ export class OpenAICompatibleProvider {
     messages: ChatMessage[],
     tools?: Array<Record<string, unknown>>,
     onThought?: (text: string) => Promise<void>,
+    toolChoice: 'auto' | 'required' = 'auto',
   ): Promise<ChatCompletionResponse> {
     const body: Record<string, unknown> = { model: profile.model, messages, reasoning_effort: 'low' }
     if (tools) {
       body.tools = tools
-      body.tool_choice = 'auto'
+      body.tool_choice = toolChoice
       body.parallel_tool_calls = false
     }
     if (onThought) body.stream = true

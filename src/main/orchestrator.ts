@@ -331,18 +331,24 @@ export class MatchOrchestrator {
     this.publish(document)
     let lastPublished = 0
     try {
-      await this.provider.takeTurn(profile, messages, link, (text, isNew) => {
-        if (isNew && thought.text) {
-          thought = { seatId, round, phase, text, time: new Date().toISOString() }
-          document.modelThoughts!.push(thought)
-        } else {
-          thought.text += text
-        }
-        if (Date.now() - lastPublished >= 100) {
-          this.publish(document)
-          lastPublished = Date.now()
-        }
-      })
+      await this.provider.takeTurn(
+        profile,
+        messages,
+        link,
+        (text, isNew) => {
+          if (isNew && thought.text) {
+            thought = { seatId, round, phase, text, time: new Date().toISOString() }
+            document.modelThoughts!.push(thought)
+          } else {
+            thought.text += text
+          }
+          if (Date.now() - lastPublished >= 100) {
+            this.publish(document)
+            lastPublished = Date.now()
+          }
+        },
+        phase === 'vote' ? 'required' : 'auto',
+      )
       trimConversationHistory(messages)
     } finally {
       if (!thought.text) document.modelThoughts = document.modelThoughts?.filter((entry) => entry !== thought)
