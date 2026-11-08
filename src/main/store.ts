@@ -1,7 +1,7 @@
 import { app, safeStorage } from 'electron'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { EloChange, GameSnapshot, MatchSummary, ModelProfile, RatingEntry, ReplayData, SeatConfig } from '@shared/types'
+import type { EloChange, GameSnapshot, MatchSummary, ModelProfile, ModelThought, RatingEntry, ReplayData, SeatConfig } from '@shared/types'
 import type { GameResult } from './games/contracts'
 import { calculateTeamElo, modelSeatsForResult } from './ratings/team-elo'
 import { countStartedModelSeatParticipations, recordStartedMatchParticipation } from './participation'
@@ -18,6 +18,7 @@ export interface MatchDocument {
   randomProfileIds?: string[]
   createdAt: string
   contextBySeat: Record<string, ChatMessage[]>
+  modelThoughts?: ModelThought[]
   ratingChanges: EloChange[]
   ratingApplied: boolean
   ratingAppliedAt?: string

@@ -60,6 +60,33 @@ describe('game module contract', () => {
     expect(() => undercoverGame.invoke(state, other.id, 'submit_clue', { clue: '线索' })).toThrow('当前不是该座位的行动回合')
   })
 
+  it('rejects a repeated clue despite case, punctuation, and spacing differences', () => {
+    const state = runningState()
+    const first = undercoverGame.currentSeatId(state)!
+    undercoverGame.invoke(state, first, 'submit_clue', { clue: 'A neutral clue' })
+    const second = undercoverGame.currentSeatId(state)!
+    expect(() => undercoverGame.invoke(state, second, 'submit_clue', { clue: 'a  neutral clue!' })).toThrow('不能重复')
+    expect(undercoverGame.currentSeatId(state)).toBe(second)
+  })
+
+  it('accepts secret votes in any order and only tallies after all voters act', () => {
+    const state = runningState()
+    while (undercoverGame.phase(state) === 'clue') {
+      const id = undercoverGame.currentSeatId(state)!
+      undercoverGame.invoke(state, id, 'submit_clue', { clue: `独特线索 ${id}` })
+    }
+    const voters = undercoverGame.pendingVoterIds!(state)
+    const last = voters[voters.length - 1]
+    undercoverGame.invoke(state, last, 'submit_vote', { target_seat_id: voters[0] })
+    expect(undercoverGame.currentSeatId(state)).toBe(voters[0])
+    expect(undercoverGame.publicState(state).latestVotes).toBeUndefined()
+    expect(() => undercoverGame.invoke(state, last, 'submit_vote', { target_seat_id: voters[0] })).toThrow()
+    for (const id of voters.slice(0, -1)) {
+      undercoverGame.invoke(state, id, 'submit_vote', { target_seat_id: id === voters[0] ? voters[1] : voters[0] })
+    }
+    expect(undercoverGame.phase(state)).not.toBe('vote')
+  })
+
   it('can play every phase through the game module contract until a result is reached', () => {
     let state = undercoverGame.start(undercoverGame.create({ undercoverCount: 1, maxRounds: 4 }, modelSeats))
     for (let safety = 0; safety < 80 && !undercoverGame.isFinished(state); safety += 1) {
@@ -136,7 +163,8 @@ describe('game module contract', () => {
     expect(instructions).toContain('Hide your own faction')
     expect(instructions).toContain('every clue is visible to all seats')
     expect(instructions).toContain('make your faction win')
-    expect(instructions).toContain('a description that uniquely identifies it')
+    expect(instructions).toContain('short, broad, indirect association')
+    expect(instructions).toContain('deliberately ambiguous')
     expect(instructions).toContain('bluff or give plausible false clues')
     expect(instructions).not.toContain('You are a civilian')
     expect(instructions).not.toContain('You are undercover')
@@ -217,6 +245,39 @@ describe('game module contract', () => {
     }
   })
 
+  it('streams fragmented reasoning and assembles fragmented tool calls before acting', async () => {
+    let state = runningState()
+    const seatId = undercoverGame.currentSeatId(state)!
+    const mcp = await createGameMcpLink(undercoverGame, seatId, () => state, async (next) => { state = next })
+    const encoder = new TextEncoder()
+    const frames = [
+      { choices: [{ delta: { reasoning_content: '先分析' } }] },
+      { choices: [{ delta: { reasoning_content: '再行动' } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call-1', function: { name: 'submit_', arguments: '{"clue":' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { name: 'clue', arguments: '"宽泛提示"}' } }] } }] },
+    ].map((frame) => `data: ${JSON.stringify(frame)}\r\n\r\n`).join('') + 'data: [DONE]\r\n\r\n'
+    const bytes = encoder.encode(frames)
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < bytes.length; i += 7) controller.enqueue(bytes.slice(i, i + 7))
+        controller.close()
+      },
+    })
+    const fetchMock = vi.fn(async () => new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const pieces: Array<[string, boolean]> = []
+    try {
+      await new OpenAICompatibleProvider().takeTurn(
+        { id: 'p', name: 'Agent', provider: 'openai-compatible', baseUrl: 'https://example.test', model: 'm', apiKey: 'key' },
+        [{ role: 'system', content: 'test' }], mcp,
+        (text, isNew) => { pieces.push([text, isNew]) },
+      )
+      expect(pieces).toEqual([['先分析', true], ['再行动', false]])
+      expect(undercoverGame.currentSeatId(state)).not.toBe(seatId)
+      expect(undercoverGame.publicState(state).events.some((event) => event.text === '宽泛提示')).toBe(true)
+    } finally { await mcp.close() }
+  })
+
   it('routes model tool calls through MCP and advances only after an accepted action', async () => {
     let state = runningState()
     const currentSeatId = undercoverGame.currentSeatId(state)!
@@ -233,6 +294,7 @@ describe('game module contract', () => {
         choices: [
           {
             message: {
+              reasoning_content: 'private reasoning for seat zero',
               tool_calls: [
                 {
                   id: 'read-1',
@@ -270,6 +332,7 @@ describe('game module contract', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
     const messages: ChatMessage[] = [{ role: 'system', content: 'Independent seat context.' }]
+    const thoughts: string[] = []
     try {
       await new OpenAICompatibleProvider().takeTurn(
         {
@@ -282,7 +345,11 @@ describe('game module contract', () => {
         },
         messages,
         mcp,
+        async (text) => { thoughts.push(text) },
       )
+      expect(thoughts).toEqual(['private reasoning for seat zero'])
+      expect(JSON.stringify(undercoverGame.observation(state, undercoverGame.currentSeatId(state)!))).not.toContain('private reasoning for seat zero')
+      expect(JSON.stringify(undercoverGame.publicState(state))).not.toContain('private reasoning for seat zero')
       expect(undercoverGame.phase(state)).toBe('clue')
       expect(undercoverGame.currentSeatId(state)).not.toBe(currentSeatId)
       expect(messages.some((message) => message.role === 'tool')).toBe(true)

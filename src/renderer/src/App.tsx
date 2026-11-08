@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   ArrowDownRight,
@@ -86,6 +86,7 @@ const presets = [
     name: "Gemini",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
   },
+  { name: "DeepSeek", baseUrl: "https://api.deepseek.com" },
   { name: "OpenAI-compatible", baseUrl: "" },
 ];
 
@@ -1276,7 +1277,13 @@ function ModelsPage({
           {presets.map((preset, index) => (
             <div className="provider-row" key={preset.name}>
               <div className={`provider-symbol provider-${index}`}>
-                {index === 0 ? "O" : index === 1 ? "G" : "↗"}
+                {index === 0
+                  ? "O"
+                  : index === 1
+                    ? "G"
+                    : index === 2
+                      ? "D"
+                      : "↗"}
               </div>
               <div>
                 <strong>{preset.name}</strong>
@@ -1347,6 +1354,7 @@ function ModelsPage({
                 >
                   <option>OpenAI</option>
                   <option>Gemini</option>
+                  <option>DeepSeek</option>
                   <option>OpenAI-compatible</option>
                 </select>
               </label>
@@ -1948,7 +1956,10 @@ function MatchPage({
   const [revealed, setRevealed] = useState(false);
   const [actionValues, setActionValues] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [tab, setTab] = useState<"events" | "seats">("events");
+  const [tab, setTab] = useState<"events" | "seats" | "private">("events");
+  const [privateSeatId, setPrivateSeatId] = useState(snapshot.seats[0]?.id ?? "");
+  const [thinkingSeatId, setThinkingSeatId] = useState("");
+  const thinkingContentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setObservation(null);
@@ -1974,6 +1985,14 @@ function MatchPage({
     }
   };
   const sortedEvents = [...snapshot.events].reverse();
+  const activeThinkingSeats = snapshot.activeModelSeatIds ?? [];
+  const visibleThinkingSeat = activeThinkingSeats.includes(thinkingSeatId) ? thinkingSeatId : (activeThinkingSeats[0] ?? "");
+  const currentThought = [...(snapshot.modelThoughts ?? [])].reverse().find((entry) => entry.seatId === visibleThinkingSeat && entry.round === snapshot.round && entry.phase === snapshot.phase);
+  useEffect(() => {
+    const element = thinkingContentRef.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [visibleThinkingSeat, currentThought?.text]);
+
   return (
     <>
       <PageHeading
@@ -2125,15 +2144,21 @@ function MatchPage({
           <section className="surface-panel event-panel">
             <div className="panel-heading">
               <div>
-                <h2>比赛时间线</h2>
-                <p>{snapshot.events.length} 个记录事件</p>
+                <h2>比赛会话</h2>
+                <p>全局发言公开，模型思考仅保存在各自席位会话</p>
               </div>
               <div className="event-tabs">
                 <button
                   className={tab === "events" ? "active" : ""}
                   onClick={() => setTab("events")}
                 >
-                  全部
+                  全局会话
+                </button>
+                <button
+                  className={tab === "private" ? "active" : ""}
+                  onClick={() => setTab("private")}
+                >
+                  席位会话
                 </button>
                 <button
                   className={tab === "seats" ? "active" : ""}
@@ -2152,6 +2177,34 @@ function MatchPage({
                     seats={snapshot.seats}
                   />
                 ))}
+              </div>
+            ) : tab === "private" ? (
+              <div className="seat-conversation">
+                <label className="seat-conversation-select">
+                  <span>查看席位</span>
+                  <select value={privateSeatId} onChange={(event) => setPrivateSeatId(event.target.value)}>
+                    {snapshot.seats.map((seat) => <option key={seat.id} value={seat.id}>{seat.name}</option>)}
+                  </select>
+                </label>
+                <p className="seat-conversation-note">此处为观察者视图；其他模型无法读取该席位的思考。</p>
+                <div className="timeline">
+                  {[
+                    ...(snapshot.modelThoughts ?? []).filter((entry) => entry.seatId === privateSeatId).map((entry, index) => ({ type: "thought" as const, time: entry.time ?? "", entry, key: `thought-${index}` })),
+                    ...snapshot.events.filter((event) => event.seatId === privateSeatId && (event.kind === "clue" || event.kind === "human")).map((event) => ({ type: "event" as const, time: event.time, event, key: event.id })),
+                  ].sort((a, b) => b.time.localeCompare(a.time)).map((item) => item.type === "event" ? (
+                    <TimelineEvent key={item.key} event={item.event} seats={snapshot.seats} />
+                  ) : (
+                    <div className="timeline-item" key={item.key}>
+                      <div className="timeline-node" />
+                      <div className="timeline-copy">
+                        <span>R{String(item.entry.round).padStart(2, "0")} · {item.entry.phase === "clue" ? "线索行动" : "投票行动"}</span>
+                        <div className="timeline-attribution"><span className="timeline-event-type">模型思考 · 仅席位可见</span></div>
+                        <p className="seat-thought-text">{item.entry.text}</p>
+                      </div>
+                    </div>
+                  ))}
+                  {!(snapshot.modelThoughts ?? []).some((entry) => entry.seatId === privateSeatId) && !snapshot.events.some((event) => event.seatId === privateSeatId && (event.kind === "clue" || event.kind === "human")) && <p className="seat-conversation-note">该席位暂无会话记录。</p>}
+                </div>
               </div>
             ) : (
               <div className="seat-list">
@@ -2179,6 +2232,19 @@ function MatchPage({
           </section>
         </div>
         <aside className="live-side">
+          <section className="surface-panel live-side-card current-thinking-card">
+            <span className="eyebrow">LIVE THINKING</span>
+            <h3>当前席位思考</h3>
+            {activeThinkingSeats.length > 0 ? (
+              <>
+                <select className="current-thinking-select" value={visibleThinkingSeat} onChange={(event) => setThinkingSeatId(event.target.value)} aria-label="选择正在行动的席位">
+                  {activeThinkingSeats.map((id) => <option value={id} key={id}>{snapshot.seats.find((seat) => seat.id === id)?.name ?? id}</option>)}
+                </select>
+                <div ref={thinkingContentRef} className="current-thinking-content" aria-live="polite">{currentThought?.text || "等待模型返回思考内容…"}</div>
+              </>
+            ) : <p>当前没有模型正在行动。</p>}
+            <p className="current-thinking-note">观察者可见 · 不会提供给其他席位</p>
+          </section>
           <section className="surface-panel live-side-card">
             <span className="eyebrow">MATCH CONFIG</span>
             <h3>对局参数</h3>
@@ -2396,7 +2462,7 @@ function ReplayPage({
   );
   const rounds = [
     ...new Set(
-      replay.privateObservations
+      [...replay.privateObservations, ...(replay.modelThoughts ?? [])]
         .filter((entry) => entry.seatId === seatId)
         .map((entry) => entry.round),
     ),
@@ -2517,6 +2583,12 @@ function ReplayPage({
             </div>
           )}
           <div className="observation-stack">
+            {(replay.modelThoughts ?? []).filter((entry) => entry.seatId === seatId && (roundFilter === "all" || entry.round === Number(roundFilter))).map((entry, index) => (
+              <details className="observation-card" key={`thought-${index}`}>
+                <summary>R{String(entry.round).padStart(2, "0")} · {entry.phase === "clue" ? "线索行动" : "投票行动"} · 模型思考</summary>
+                <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{entry.text}</p>
+              </details>
+            ))}
             {observations.length ? (
               observations.map((entry, index) => (
                 <div

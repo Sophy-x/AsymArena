@@ -3211,3 +3211,12 @@ select:focus-visible {
   color-scheme: light;
   background: #fff;
 }
+
+.seat-conversation-select { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.seat-conversation-select select { max-width: 100%; padding: 6px 10px; }
+.seat-conversation-note { color: var(--text-muted, #888); font-size: 12px; margin: 0 0 16px; }
+.seat-thought-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.current-thinking-select { width: 100%; margin: 8px 0 12px; padding: 8px 10px; border: 1px solid var(--border, #394350); border-radius: 6px; background: transparent; color: inherit; }
+.current-thinking-content { max-height: 320px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.65; }
+.current-thinking-note { margin-top: 12px; font-size: 11px; opacity: .7; }

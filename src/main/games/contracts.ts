@@ -25,6 +25,7 @@ export interface GameModule {
   round(state: unknown): number
   maxRounds(state: unknown): number
   currentSeatId(state: unknown): string | undefined
+  pendingVoterIds?(state: unknown): string[]
   isFinished(state: unknown): boolean
   isWaitingForHuman(state: unknown): boolean
   needsAdvance(state: unknown): boolean

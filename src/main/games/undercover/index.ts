@@ -61,7 +61,7 @@ const toolSpecs: GameTool[] = [
   },
   {
     name: 'submit_clue',
-    description: 'Submit one short clue. Do not include your exact word.',
+    description: 'Submit one short, indirect clue. Broad or deliberately ambiguous wording is welcome; do not include your exact word or reveal distinctive identifying details.',
     inputSchema: { clue: z.string().min(1).max(80) },
     jsonSchema: {
       type: 'object',
@@ -361,6 +361,12 @@ export const undercoverGame: GameModule = {
     if (state.phase === 'vote') return state.voteOrder[state.voteIndex]
     return undefined
   },
+  pendingVoterIds(raw) {
+    const state = raw as UndercoverState
+    return state.status === 'running' && state.phase === 'vote'
+      ? state.voteOrder.filter((id) => !state.votes[id])
+      : []
+  },
   isFinished(raw) {
     return (raw as UndercoverState).status === 'finished'
   },
@@ -378,7 +384,8 @@ export const undercoverGame: GameModule = {
       'Civilians win when all undercover seats are eliminated. Undercover wins when the undercover count reaches the civilian count.',
       'Before every action, call get_my_observation to read your role and word plus the complete public event history, including your own and every other seat’s previous statements. Use these clues and events to infer each seat’s likely faction and word; treat guesses as uncertain.',
       'Hide your own faction: every clue is visible to all seats, so avoid wording that reveals your role or makes your word easy for opponents to identify.',
-      'Your goal is to make your faction win. Keep clues indirect: do not state your word, an obvious synonym, or a description that uniquely identifies it. Give only enough detail to support your faction without making your word easy for opponents to identify.',
+      'Your goal is to make your faction win. For every clue, prioritize protecting your word over explaining it: use a short, broad, indirect association that could plausibly fit several words. You may be deliberately ambiguous, evasive or mildly misleading when strategically useful. Avoid lists of distinctive features, precise functions, specific settings, obvious synonyms and descriptions that let others immediately guess the word. Give only a minimal signal, not a definition or a detailed explanation. Never state your exact word.',
+      'Each clue or additional statement must contribute a new point: do not repeat or paraphrase any earlier statement in this game, including your own.',
       'Choose what to say and do to help your faction; bluff or give plausible false clues when useful.',
       'Use the available MCP tools to submit one legal action.',
     ].join(' ')
@@ -419,7 +426,7 @@ export const undercoverGame: GameModule = {
           ? {
               ...tool,
               description:
-                'As a tied top-vote candidate, make one additional statement without revealing your exact word. All living seats will then vote again.',
+                'As a tied top-vote candidate, make one brief, indirect additional statement. Broad or deliberately ambiguous wording is welcome; do not reveal your word or distinctive identifying details. All living seats will then vote again.',
             }
           : tool,
       )
@@ -448,7 +455,8 @@ export const undercoverGame: GameModule = {
     const seat = findSeat(state, seatId)
     if (toolName === 'get_public_state') return { state, result: agentSnapshot(state) }
     if (toolName === 'get_my_observation') return { state, result: this.observation(state, seatId) }
-    if (state.status !== 'running' || this.currentSeatId(state) !== seatId) throw new Error('当前不是该座位的行动回合')
+    const canVote = toolName === 'submit_vote' && state.phase === 'vote' && state.voteOrder.includes(seatId) && !state.votes[seatId]
+    if (state.status !== 'running' || (!canVote && this.currentSeatId(state) !== seatId)) throw new Error('当前不是该座位的行动回合')
 
     if (toolName === 'submit_clue') {
       if (state.phase !== 'clue') throw new Error('当前不是线索阶段')
@@ -456,6 +464,8 @@ export const undercoverGame: GameModule = {
         .trim()
         .replace(/\s+/g, ' ')
       if (!clue) throw new Error('线索不能为空')
+      const normalized = (text: string) => text.normalize('NFKC').toLocaleLowerCase().replace(/[\s\p{P}\p{S}]/gu, '')
+      if (state.clues.some((previous) => normalized(previous.text) === normalized(clue))) throw new Error('线索不能重复本局之前的发言，请提供新的要点')
       if (clue.length > 80) throw new Error('线索不能超过 80 个字符')
       if (clue.toLocaleLowerCase().includes(seat.word.toLocaleLowerCase())) throw new Error('线索不能直接包含自己的词语')
       state.clues.push({ seatId, round: state.round, text: clue })
@@ -480,7 +490,7 @@ export const undercoverGame: GameModule = {
       if (targetId === seatId) throw new Error('不能投给自己')
       if (!target.alive) throw new Error('不能投给已淘汰的座位')
       state.votes[seatId] = targetId
-      state.voteIndex += 1
+      while (state.voteIndex < state.voteOrder.length && state.votes[state.voteOrder[state.voteIndex]]) state.voteIndex += 1
       if (state.voteIndex < state.voteOrder.length) return { state, result: { accepted: true } }
 
       const counts = Object.values(state.votes).reduce<Record<string, number>>((result, id) => {

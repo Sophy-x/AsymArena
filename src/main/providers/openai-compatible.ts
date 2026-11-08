@@ -6,6 +6,8 @@ interface ChatCompletionResponse {
   choices?: Array<{
     message?: {
       content?: string | null
+      reasoning_content?: string | null
+      reasoning?: string | null
       tool_calls?: Array<{
         id: string
         type?: string
@@ -34,7 +36,7 @@ export class OpenAICompatibleProvider {
     return `Connected · ${profile.model}`
   }
 
-  async takeTurn(profile: ModelProfile, messages: ChatMessage[], mcp: GameMcpLink): Promise<void> {
+  async takeTurn(profile: ModelProfile, messages: ChatMessage[], mcp: GameMcpLink, onThought?: (text: string, isNew: boolean) => void | Promise<void>): Promise<void> {
     const toolList = await mcp.client.listTools()
     const tools = toolList.tools.map((tool) => ({
       type: 'function',
@@ -45,7 +47,13 @@ export class OpenAICompatibleProvider {
       },
     }))
     for (let iteration = 0; iteration < 8; iteration += 1) {
-      const response = await this.complete(profile, messages, tools)
+      let hasThought = false
+      const emitThought = async (text: string) => {
+        if (!text) return
+        await onThought?.(text, !hasThought)
+        hasThought = true
+      }
+      const response = await this.complete(profile, messages, tools, emitThought)
       const message = response.choices?.[0]?.message
       if (!message) throw new ProviderError('Model response contained no message')
       const toolCalls = message.tool_calls ?? []
@@ -94,6 +102,7 @@ export class OpenAICompatibleProvider {
     profile: ModelProfile,
     messages: ChatMessage[],
     tools?: Array<Record<string, unknown>>,
+    onThought?: (text: string) => Promise<void>,
   ): Promise<ChatCompletionResponse> {
     const body: Record<string, unknown> = { model: profile.model, messages }
     if (tools) {
@@ -101,7 +110,8 @@ export class OpenAICompatibleProvider {
       body.tool_choice = 'auto'
       body.parallel_tool_calls = false
     }
-    return await this.request(profile, '/chat/completions', body) as ChatCompletionResponse
+    if (onThought) body.stream = true
+    return await this.request(profile, '/chat/completions', body, 'POST', onThought) as ChatCompletionResponse
   }
 
   private async request(
@@ -109,6 +119,7 @@ export class OpenAICompatibleProvider {
     path: string,
     body?: Record<string, unknown>,
     method = 'POST',
+    onThought?: (text: string) => Promise<void>,
   ): Promise<unknown> {
     const base = profile.baseUrl.trim().replace(/\/+$/, '')
     if (!base) throw new ProviderError('Base URL is required')
@@ -119,7 +130,7 @@ export class OpenAICompatibleProvider {
         method,
         headers: {
           Authorization: `Bearer ${profile.apiKey}`,
-          Accept: 'application/json',
+          Accept: onThought ? 'text/event-stream, application/json' : 'application/json',
           ...(body ? { 'Content-Type': 'application/json' } : {}),
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
@@ -127,6 +138,9 @@ export class OpenAICompatibleProvider {
       })
     } catch (error) {
       throw new ProviderError(error instanceof Error ? error.message : 'Network request failed')
+    }
+    if (response.ok && onThought && response.body && response.headers.get('content-type')?.includes('text/event-stream')) {
+      return this.readStream(response.body, onThought)
     }
     const text = await response.text()
     let payload: ChatCompletionResponse & Record<string, unknown>
@@ -139,6 +153,55 @@ export class OpenAICompatibleProvider {
       const detail = payload.error?.message ?? text.slice(0, 400)
       throw new ProviderError(`HTTP ${response.status}: ${detail}`, response.status)
     }
+    if (onThought) {
+      const message = payload.choices?.[0]?.message
+      const thought = message?.reasoning_content ?? message?.reasoning ?? message?.content
+      if (typeof thought === 'string' && thought) await onThought(thought)
+    }
     return payload
+  }
+
+  private async readStream(body: ReadableStream<Uint8Array>, onThought: (text: string) => Promise<void>): Promise<ChatCompletionResponse> {
+    const reader = body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let doneEvent = false
+    let content = ''
+    const calls = new Map<number, { id: string; type: 'function'; function: { name: string; arguments: string } }>()
+    const consume = async (frame: string) => {
+      const data = frame.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n')
+      if (!data) return
+      if (data.trim() === '[DONE]') { doneEvent = true; return }
+      let chunk: { error?: { message?: string }; choices?: Array<{ delta?: { content?: string | null; reasoning_content?: string | null; reasoning?: string | null; tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }> } }> }
+      try { chunk = JSON.parse(data) } catch { throw new ProviderError('Provider returned invalid streaming JSON') }
+      if (chunk.error) throw new ProviderError(chunk.error.message ?? 'Provider streaming error')
+      const delta = chunk.choices?.[0]?.delta
+      if (!delta) return
+      if (typeof delta.content === 'string') content += delta.content
+      const thought = delta.reasoning_content ?? delta.reasoning ?? delta.content
+      if (typeof thought === 'string' && thought) await onThought(thought)
+      for (const part of delta.tool_calls ?? []) {
+        const call = calls.get(part.index) ?? { id: '', type: 'function' as const, function: { name: '', arguments: '' } }
+        if (part.id) call.id += part.id
+        if (part.function?.name) call.function.name += part.function.name
+        if (part.function?.arguments) call.function.arguments += part.function.arguments
+        calls.set(part.index, call)
+      }
+    }
+    try {
+      while (true) {
+        const { value, done } = await reader.read()
+        buffer += decoder.decode(value, { stream: !done })
+        const frames = buffer.split(/\r?\n\r?\n/)
+        buffer = frames.pop() ?? ''
+        for (const frame of frames) await consume(frame)
+        if (done) break
+      }
+      if (buffer.trim()) await consume(buffer)
+      if (!doneEvent) throw new ProviderError('Provider streaming response ended unexpectedly')
+    } finally {
+      reader.releaseLock()
+    }
+    return { choices: [{ message: { content: content || null, tool_calls: [...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call) } }] }
   }
 }

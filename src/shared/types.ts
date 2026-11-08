@@ -64,6 +64,14 @@ export interface HumanActionSpec {
   fields: HumanActionField[]
 }
 
+export interface ModelThought {
+  seatId: string
+  round: number
+  phase: string
+  text: string
+  time?: string
+}
+
 export interface GameSnapshot {
   matchId: string
   gameId: string
@@ -79,6 +87,8 @@ export interface GameSnapshot {
   seats: PublicSeat[]
   humanActions?: HumanActionSpec[]
   events: GameEvent[]
+  modelThoughts?: ModelThought[]
+  activeModelSeatIds?: string[]
   latestVotes?: Record<string, number>
   winner?: string
   outcome?: string
@@ -146,6 +156,7 @@ export interface ReplayData {
     phase: string
     observation: PrivateObservation
   }>
+  modelThoughts?: ModelThought[]
   roles: Array<{
     seatId: string
     name: string

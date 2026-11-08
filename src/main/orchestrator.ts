@@ -30,6 +30,7 @@ export class MatchOrchestrator {
   private readonly waiters = new Map<string, () => void>()
   private readonly listeners = new Set<UpdateListener>()
   private readonly running = new Set<string>()
+  private readonly activeModelSeats = new Map<string, Set<string>>()
 
   async bootstrap(): Promise<{
     games: ReturnType<GameRegistry['all']>[number]['descriptor'][]
@@ -199,6 +200,7 @@ export class MatchOrchestrator {
     const seat = document.seats.find((candidate) => candidate.id === seatId)
     if (!seat || seat.kind !== 'human') throw new Error('This seat is not a human seat')
     const game = this.registry.get(document.gameId)
+    if (document.runStatus !== 'waiting-human' || game.currentSeatId(document.gameState) !== seatId) throw new Error('当前不是该座位的行动回合')
     const { state } = game.invoke(document.gameState, seatId, tool, args)
     document.gameState = state
     document.runStatus = 'running'
@@ -228,6 +230,7 @@ export class MatchOrchestrator {
     return {
       snapshot: this.snapshot(document),
       privateObservations: game.replayObservations(document.gameState),
+      modelThoughts: document.modelThoughts ?? [],
       roles: result.roles,
       ratingChanges: document.ratingChanges,
     }
@@ -249,6 +252,16 @@ export class MatchOrchestrator {
           document.gameState = game.next(document.gameState)
           await this.store.saveMatch(document)
           this.publish(document)
+          continue
+        }
+
+        const pendingModels = (game.pendingVoterIds?.(document.gameState) ?? [])
+          .map((id) => document.seats.find((seat) => seat.id === id))
+          .filter((seat): seat is Extract<SeatConfig, { kind: 'model' }> => seat?.kind === 'model')
+        if (pendingModels.length) {
+          const results = await Promise.allSettled(pendingModels.map((seat) => this.runModelTurn(document, game, seat.id, seat.profileId)))
+          const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+          if (failed) throw failed.reason
           continue
         }
 
@@ -308,11 +321,35 @@ export class MatchOrchestrator {
         this.publish(document)
       },
     )
+    const round = game.round(document.gameState)
+    const phase = game.phase(document.gameState)
+    const active = this.activeModelSeats.get(document.id) ?? new Set<string>()
+    this.activeModelSeats.set(document.id, active)
+    active.add(seatId)
+    let thought = { seatId, round, phase, text: '', time: new Date().toISOString() }
+    ;(document.modelThoughts ??= []).push(thought)
+    this.publish(document)
+    let lastPublished = 0
     try {
-      await this.provider.takeTurn(profile, messages, link)
+      await this.provider.takeTurn(profile, messages, link, (text, isNew) => {
+        if (isNew && thought.text) {
+          thought = { seatId, round, phase, text, time: new Date().toISOString() }
+          document.modelThoughts!.push(thought)
+        } else {
+          thought.text += text
+        }
+        if (Date.now() - lastPublished >= 100) {
+          this.publish(document)
+          lastPublished = Date.now()
+        }
+      })
       trimConversationHistory(messages)
-      await this.store.saveMatch(document)
     } finally {
+      if (!thought.text) document.modelThoughts = document.modelThoughts?.filter((entry) => entry !== thought)
+      active.delete(seatId)
+      if (!active.size) this.activeModelSeats.delete(document.id)
+      await this.store.saveMatch(document)
+      this.publish(document)
       await link.close()
     }
   }
@@ -359,6 +396,8 @@ export class MatchOrchestrator {
     const game = this.registry.get(document.gameId)
     return {
       ...game.publicState(document.gameState),
+      modelThoughts: [...(document.modelThoughts ?? [])],
+      activeModelSeatIds: [...(this.activeModelSeats.get(document.id) ?? [])],
       status: document.runStatus,
       error: document.error,
       eloChanges: document.ratingChanges,
